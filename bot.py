@@ -10,6 +10,7 @@ Ishga tushirish:
     4) python bot.py
 """
 
+import asyncio
 import logging
 import os
 
@@ -421,6 +422,15 @@ def main():
 
     webhook_url = f"{external_url}/telegram"
     logger.info("Bot webhook orqali ishga tushmoqda: %s", webhook_url)
+
+    # Python 3.14 da asyncio.get_event_loop() endi avtomatik loop yaratmaydi.
+    # python-telegram-bot 21.x ning run_webhook() metodi esa mavjud event loop kutadi.
+    # Shu sababli Render worker threadida loopni oldindan yaratamiz.
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     app.run_webhook(
         listen="0.0.0.0",
         port=port,
