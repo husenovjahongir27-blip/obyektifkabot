@@ -1,113 +1,96 @@
+# -*- coding: utf-8 -*-
+"""
+MA'LUMOTNOMA va (ixtiyoriy) Qarindoshlar to'g'risida ma'lumot hujjatini
+tayyorlovchi Telegram bot.
 
-    await query.edit_message_text(t(context, "done"))
+Ishga tushirish:
+    1) pip install -r requirements.txt
+    2) fonts/DejaVuSans.ttf va fonts/DejaVuSans-Bold.ttf fayllarini joylang (PDF uchun)
+    3) BOT_TOKEN muhit o'zgaruvchisini o'rnating
+    4) python bot.py
+"""
 
-    # MA'LUMOTNOMA va yaqin qarindoshlar ma'lumotini bitta faylga birlashtiramiz.
-    try:
-        path = generate("combined", lang_key, data, fmt)
-    except Exception as e:
-        logger.exception("Bitta hujjat yaratishda xato: %s", e)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id, text=f"Xatolik yuz berdi: {e}"
-        )
-        context.user_data.clear()
-        return ConversationHandler.END
+import logging
+import os
 
-    with open(path, "rb") as f:
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=f,
-            filename=os.path.basename(path),
-            caption="✅ MA'LUMOTNOMA va yaqin qarindoshlar haqidagi ma'lumot",
-        )
-    os.remove(path)
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    ContextTypes,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
-    photo_path = context.user_data.get("photo_path")
-    if photo_path and os.path.exists(photo_path):
-        os.remove(photo_path)
+from generator import generate
+from labels import PROMPTS, RELATION_OPTIONS
 
-    context.user_data.clear()
-    return ConversationHandler.END
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+)
+logger = logging.getLogger(__name__)
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_TOKEN_HERE")
+
+(
+    CHOOSING_LANG,
+    CHOOSING_SCRIPT,
+    FULL_NAME,
+    BIRTH_DATE,
+    BIRTH_PLACE,
+    NATIONALITY,
+    EDU_LEVEL,
+    EDU_DETAIL,
+    SPECIALTY,
+    ACAD_DEGREE,
+    ACAD_TITLE,
+    FOREIGN_LANG,
+    MILITARY_TITLE,
+    STATE_AWARDS,
+    WORK_YEARS,
+    WORK_POSITION,
+    WORK_LOOP,
+    ASK_RELATIVES,
+    REL_RELATION,
+    REL_NAME,
+    REL_BIRTH,
+    REL_WORK,
+    REL_ADDRESS,
+    REL_LOOP,
+    CHOOSING_FORMAT,
+    PHOTO,
+) = range(26)
 
 
-async def cancel(update, context):
-    photo_path = context.user_data.get("photo_path")
-    if photo_path and os.path.exists(photo_path):
-        os.remove(photo_path)
-    context.user_data.clear()
-    await update.message.reply_text("Bekor qilindi. Qaytadan boshlash uchun /start bosing.")
-    return ConversationHandler.END
+def t(context, key):
+    lang = context.user_data["lang_key"]
+    return PROMPTS[lang][key]
 
 
-TEXT_FILTER = filters.TEXT & ~filters.COMMAND
+def lang_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("🇺🇿 O'zbekcha", callback_data="lang_uz")],
+        [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
+    ])
 
 
-def main():
-    if BOT_TOKEN == "PUT_YOUR_TOKEN_HERE":
-        raise RuntimeError(
-            "BOT_TOKEN o'rnatilmagan! Muhit o'zgaruvchisi sifatida bering yoki "
-            "bot.py faylida to'g'ridan-to'g'ri kiriting."
-        )
+def script_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("Lotin", callback_data="script_latin")],
+        [InlineKeyboardButton("Кирилл", callback_data="script_cyrillic")],
+    ])
 
-    app = Application.builder().token(BOT_TOKEN).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
-        states={
-            CHOOSING_LANG: [CallbackQueryHandler(choose_lang, pattern="^lang_")],
-            CHOOSING_SCRIPT: [CallbackQueryHandler(choose_script, pattern="^script_")],
-            FULL_NAME: [MessageHandler(TEXT_FILTER, get_full_name)],
-            PHOTO: [MessageHandler(filters.PHOTO, get_photo)],
-            BIRTH_DATE: [MessageHandler(TEXT_FILTER, get_birth_date)],
-            BIRTH_PLACE: [MessageHandler(TEXT_FILTER, get_birth_place)],
-            NATIONALITY: [MessageHandler(TEXT_FILTER, get_nationality)],
-            EDU_LEVEL: [MessageHandler(TEXT_FILTER, get_edu_level)],
-            EDU_DETAIL: [MessageHandler(TEXT_FILTER, get_edu_detail)],
-            SPECIALTY: [MessageHandler(TEXT_FILTER, get_specialty)],
-            ACAD_DEGREE: [MessageHandler(TEXT_FILTER, get_acad_degree)],
-            ACAD_TITLE: [MessageHandler(TEXT_FILTER, get_acad_title)],
-            FOREIGN_LANG: [MessageHandler(TEXT_FILTER, get_foreign_lang)],
-            MILITARY_TITLE: [MessageHandler(TEXT_FILTER, get_military_title)],
-            STATE_AWARDS: [MessageHandler(TEXT_FILTER, get_state_awards)],
-            WORK_YEARS: [MessageHandler(TEXT_FILTER, get_work_years)],
-            WORK_POSITION: [MessageHandler(TEXT_FILTER, get_work_position)],
-            WORK_LOOP: [CallbackQueryHandler(work_loop_decision, pattern="^work_more_")],
-            ASK_RELATIVES: [CallbackQueryHandler(ask_relatives_decision, pattern="^rel_(yes|no)$")],
-            REL_RELATION: [CallbackQueryHandler(get_rel_relation, pattern="^relation_")],
-            REL_NAME: [MessageHandler(TEXT_FILTER, get_rel_name)],
-            REL_BIRTH: [MessageHandler(TEXT_FILTER, get_rel_birth)],
-            REL_WORK: [MessageHandler(TEXT_FILTER, get_rel_work)],
-            REL_ADDRESS: [MessageHandler(TEXT_FILTER, get_rel_address)],
-            REL_LOOP: [CallbackQueryHandler(rel_loop_decision, pattern="^rel_more_")],
-            CHOOSING_FORMAT: [CallbackQueryHandler(choose_format_and_send, pattern="^fmt_")],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    app.add_handler(conv_handler)
-
-    logger.info("Bot ishga tushdi...")
-
-    # Render Free Web Service uchun webhook.
-    # Python 3.14 da python-telegram-bot run_webhook event-loopni
-    # MainThread'da aniq yaratishni talab qilishi mumkin.
-    import asyncio
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-    port = int(os.environ.get("PORT", "10000"))
-    external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
-        webhook_url = external_url.rstrip("/") + "/telegram-webhook"
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="telegram-webhook",
-            webhook_url=webhook_url,
-            allowed_updates=Update.ALL_TYPES,
-        )
+def yes_no_keyboard(yes_data, no_data, lang_key):
+    if lang_key == "ru":
+        yes_text, no_text = "Да", "Нет"
+    elif lang_key == "uz_cyrillic":
+        yes_text, no_text = "Ҳа", "Йўқ"
     else:
-        # Lokal kompyuterda ishga tushirish uchun polling.
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
-
-
-if __name__ == "__main__":
-    main()
+        yes_text, no_text = "Ha", "Yo'q"
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(yes_text, callback_data=yes_data),
+         InlineKeyboardButton(no_text, callback_data=no_data)],
+    ])
