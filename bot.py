@@ -412,8 +412,22 @@ def main():
 
     app.add_handler(conv_handler)
 
-    logger.info("Bot ishga tushdi...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Render Free Web Service uchun webhook rejimi.
+    # Render avtomatik ravishda RENDER_EXTERNAL_URL va PORT beradi.
+    port = int(os.environ.get("PORT", "10000"))
+    external_url = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not external_url:
+        raise RuntimeError("RENDER_EXTERNAL_URL o'rnatilmagan. Bu bot Render Web Service sifatida ishga tushirilishi kerak.")
+
+    webhook_url = f"{external_url}/telegram"
+    logger.info("Bot webhook orqali ishga tushmoqda: %s", webhook_url)
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=port,
+        url_path="telegram",
+        webhook_url=webhook_url,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
