@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-MA'LUMOTNOMA va (ixtiyoriy) Qarindoshlar to'g'risida ma'lumot hujjatini
+MA’LUMOTNOMA va (ixtiyoriy) Qarindoshlar to'g'risida ma’lumot hujjatini
 tayyorlovchi Telegram bot.
 
 Ishga tushirish:
     1) pip install -r requirements.txt
     2) fonts/DejaVuSans.ttf va fonts/DejaVuSans-Bold.ttf fayllarini joylang (PDF uchun)
-    3) BOT_TOKEN muhit o'zgaruvchisini o'rnating
+    3) BOT_TOKEN muhit oʻzgaruvchisini o'rnating
     4) python bot.py
 """
 
@@ -80,7 +80,7 @@ def t(context, key):
 
 def lang_keyboard():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🇺🇿 O'zbekcha", callback_data="lang_uz")],
+        [InlineKeyboardButton("🇺🇿 Oʻzbekcha", callback_data="lang_uz")],
         [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
     ])
 
