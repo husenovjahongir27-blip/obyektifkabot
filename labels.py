@@ -6,7 +6,7 @@ uz_latin / uz_cyrillic / ru uchun alohida.
 
 LABELS = {
     "uz_latin": {
-        "doc_title": "MA'LUMOTNOMA",
+        "doc_title": "MA’LUMOTNOMA",
         "birth_date": "Tugʻilgan yili:",
         "birth_place": "Tugʻilgan joyi:",
         "nationality": "Millati:",
@@ -19,7 +19,7 @@ LABELS = {
         "military_title": "Harbiy (maxsus) unvoni:",
         "state_awards": "Davlat mukofotlari bilan taqdirlanganmi (qanday):",
         "work_history_heading": "MEHNAT FAOLIYATI:",
-        "rel_title_tpl": "{name}ning yaqin qarindoshlari toʻgʻrisida\nMA'LUMOT",
+        "rel_title_tpl": "{name}ning yaqin qarindoshlari toʻgʻrisida\nMA’LUMOT",
         "rel_col_relation": "Qarindoshligi",
         "rel_col_name": "Familiyasi, ismi va otasining ismi",
         "rel_col_birth": "Tugʻilgan yili va joyi",
