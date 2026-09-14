@@ -16,7 +16,11 @@ _pool = None
 async def get_pool():
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(DATABASE_URL, ssl="require")
+        # statement_cache_size=0 — Supabase'ning Connection Pooling (PgBouncer,
+        # transaction rejimi) bilan mos ishlashi uchun kerak.
+        _pool = await asyncpg.create_pool(
+            DATABASE_URL, ssl="require", statement_cache_size=0
+        )
     return _pool
 
 
@@ -46,6 +50,9 @@ async def init_db():
             )
             """
         )
+        # Eski jadvalda bo'lmasa — faylning o'zini saqlash uchun ustunlar qo'shamiz
+        await conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_name TEXT")
+        await conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA")
 
 
 async def register_user(chat_id: int, username: str | None):
@@ -63,18 +70,21 @@ async def register_user(chat_id: int, username: str | None):
         )
 
 
-async def log_document(chat_id: int, full_name: str, fmt: str):
+async def log_document(chat_id: int, full_name: str, fmt: str, file_name: str, file_data: bytes):
     if not DATABASE_URL:
         return
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
             """
-            INSERT INTO documents (chat_id, full_name, fmt) VALUES ($1, $2, $3)
+            INSERT INTO documents (chat_id, full_name, fmt, file_name, file_data)
+            VALUES ($1, $2, $3, $4, $5)
             """,
             chat_id,
             full_name,
             fmt,
+            file_name,
+            file_data,
         )
 
 
@@ -85,7 +95,7 @@ async def get_user_documents(chat_id: int, limit: int = 15):
     async with pool.acquire() as conn:
         rows = await conn.fetch(
             """
-            SELECT full_name, fmt, created_at FROM documents
+            SELECT id, full_name, fmt, created_at FROM documents
             WHERE chat_id = $1
             ORDER BY created_at DESC
             LIMIT $2
@@ -94,6 +104,23 @@ async def get_user_documents(chat_id: int, limit: int = 15):
             limit,
         )
     return rows
+
+
+async def get_document_file(doc_id: int, chat_id: int):
+    """Foydalanuvchiga tegishli hujjatning fayl nomi va bayt ma'lumotini qaytaradi."""
+    if not DATABASE_URL:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT file_name, file_data FROM documents
+            WHERE id = $1 AND chat_id = $2
+            """,
+            doc_id,
+            chat_id,
+        )
+    return row
 
 
 async def get_user_count() -> int:
