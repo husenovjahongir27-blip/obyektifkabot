@@ -85,6 +85,8 @@ def normalize_uzbek_text(value: str) -> str:
     PHOTO,
 ) = range(26)
 
+BROADCAST_WAITING = 100
+
 
 def t(context, key):
     lang = context.user_data["lang_key"]
@@ -494,7 +496,15 @@ async def choose_format_and_send(update, context):
 
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Faqat admin uchun: nechta odam foydalanganini ko'rsatadi."""
-    if not ADMIN_ID or str(update.effective_user.id) != str(ADMIN_ID):
+    if not ADMIN_ID:
+        await update.message.reply_text(
+            "⚠️ ADMIN_ID sozlanmagan. Render'da ADMIN_ID muhit o'zgaruvchisini qo'shing."
+        )
+        return
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        await update.message.reply_text(
+            f"⛔ Bu buyruq faqat admin uchun. Sizning ID'ingiz: {update.effective_user.id}"
+        )
         return
     user_count = await db.get_user_count()
     doc_count = await db.get_document_count()
@@ -502,6 +512,50 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"👥 Foydalanuvchilar soni: {user_count}\n"
         f"📄 Yaratilgan hujjatlar soni: {doc_count}"
     )
+
+
+async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Faqat admin uchun: /broadcast — barcha foydalanuvchilarga xabar yuborish."""
+    if not ADMIN_ID:
+        await update.message.reply_text(
+            "⚠️ ADMIN_ID sozlanmagan. Render'da ADMIN_ID muhit o'zgaruvchisini qo'shing."
+        )
+        return ConversationHandler.END
+    if str(update.effective_user.id) != str(ADMIN_ID):
+        await update.message.reply_text(
+            f"⛔ Bu buyruq faqat admin uchun. Sizning ID'ingiz: {update.effective_user.id}"
+        )
+        return ConversationHandler.END
+    await update.message.reply_text(
+        "📢 Barcha foydalanuvchilarga yuboriladigan xabarni yuboring "
+        "(matn, rasm yoki fayl — caption bilan ham bo'ladi).\n"
+        "Bekor qilish uchun /cancel."
+    )
+    return BROADCAST_WAITING
+
+
+async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not ADMIN_ID or str(update.effective_user.id) != str(ADMIN_ID):
+        return ConversationHandler.END
+
+    user_ids = await db.get_all_user_ids()
+    sent, failed = 0, 0
+    for chat_id in user_ids:
+        try:
+            await context.bot.copy_message(
+                chat_id=chat_id,
+                from_chat_id=update.effective_chat.id,
+                message_id=update.message.message_id,
+            )
+            sent += 1
+        except Exception as e:
+            logger.warning("Broadcast xato (chat_id=%s): %s", chat_id, e)
+            failed += 1
+
+    await update.message.reply_text(
+        f"✅ Xabar yuborildi: {sent} ta\n❌ Yuborilmadi: {failed} ta"
+    )
+    return ConversationHandler.END
 
 
 async def cancel(update, context):
@@ -566,6 +620,15 @@ def main():
     # Asosiy menyu tugmalari (ConversationHandler'dan tashqarida, doim ishlaydi)
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stats", stats))
+
+    broadcast_handler = ConversationHandler(
+        entry_points=[CommandHandler("broadcast", broadcast_start)],
+        states={
+            BROADCAST_WAITING: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_send)]
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    app.add_handler(broadcast_handler)
     app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_MY_OBJECTS)}$"), menu_my_objects))
     app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_BALANCE)}$"), menu_balance))
     app.add_handler(CallbackQueryHandler(resend_document, pattern=r"^resend_doc:\d+$"))
