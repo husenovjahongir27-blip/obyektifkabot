@@ -30,6 +30,7 @@ from telegram.ext import (
     filters,
 )
 
+import db
 from generator import generate
 from labels import PROMPTS, RELATION_OPTIONS
 
@@ -39,6 +40,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_TOKEN_HERE")
+ADMIN_ID = os.environ.get("ADMIN_ID")
 
 # Asosiy menyu tugmalari (doimiy pastki klaviatura)
 BTN_NEW = "🟢 Yangi ob'ektivka"
@@ -143,6 +145,7 @@ def main_menu_keyboard():
 # ---------------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
+    await db.register_user(update.effective_chat.id, update.effective_user.username)
     await update.message.reply_text(
         "Assalomu alaykum! Bu bot MA’LUMOTNOMA va qarindoshlar toʻgʻrisidagi "
         "ma’lumot hujjatini tayyorlab beradi.\n\n"
@@ -164,10 +167,21 @@ async def begin_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 async def menu_my_objects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "📁 \"Mening ob'ektivkam\" boʻlimi tez orada ishga tushadi.",
-        reply_markup=main_menu_keyboard(),
-    )
+    rows = await db.get_user_documents(update.effective_chat.id)
+    if not rows:
+        await update.message.reply_text(
+            "📁 Sizda hali yaratilgan ob'ektivka yo'q.\n"
+            "Boshlash uchun \"🟢 Yangi ob'ektivka\" tugmasini bosing.",
+            reply_markup=main_menu_keyboard(),
+        )
+        return ConversationHandler.END
+
+    lines = ["📁 Sizning ob'ektivkalaringiz:\n"]
+    for i, row in enumerate(rows, start=1):
+        sana = row["created_at"].strftime("%d.%m.%Y %H:%M")
+        lines.append(f"{i}. {row['full_name']} — {row['fmt'].upper()} ({sana})")
+
+    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
     return ConversationHandler.END
 
 
@@ -427,12 +441,26 @@ async def choose_format_and_send(update, context):
         )
     os.remove(path)
 
+    await db.log_document(query.message.chat_id, data.get("full_name", "—"), fmt)
+
     photo_path = context.user_data.get("photo_path")
     if photo_path and os.path.exists(photo_path):
         os.remove(photo_path)
 
     context.user_data.clear()
     return ConversationHandler.END
+
+
+async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Faqat admin uchun: nechta odam foydalanganini ko'rsatadi."""
+    if not ADMIN_ID or str(update.effective_user.id) != str(ADMIN_ID):
+        return
+    user_count = await db.get_user_count()
+    doc_count = await db.get_document_count()
+    await update.message.reply_text(
+        f"👥 Foydalanuvchilar soni: {user_count}\n"
+        f"📄 Yaratilgan hujjatlar soni: {doc_count}"
+    )
 
 
 async def cancel(update, context):
@@ -454,7 +482,10 @@ def main():
             "bot.py faylida toʻgʻridan-toʻgʻri kiriting."
         )
 
-    app = Application.builder().token(BOT_TOKEN).build()
+    async def _post_init(application: Application) -> None:
+        await db.init_db()
+
+    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
 
     conv_handler = ConversationHandler(
         entry_points=[
@@ -493,6 +524,7 @@ def main():
 
     # Asosiy menyu tugmalari (ConversationHandler'dan tashqarida, doim ishlaydi)
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stats", stats))
     app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_MY_OBJECTS)}$"), menu_my_objects))
     app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_BALANCE)}$"), menu_balance))
 
