@@ -14,7 +14,12 @@ import logging
 import os
 import re
 
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardMarkup,
+    Update,
+)
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -34,6 +39,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_TOKEN_HERE")
+
+# Asosiy menyu tugmalari (doimiy pastki klaviatura)
+BTN_NEW = "🟢 Yangi ob'ektivka"
+BTN_MY_OBJECTS = "📁 Mening ob'ektivkam"
+BTN_BALANCE = "💰 Balans"
 
 
 def normalize_uzbek_text(value: str) -> str:
@@ -118,20 +128,55 @@ def format_keyboard():
     ])
 
 
+def main_menu_keyboard():
+    return ReplyKeyboardMarkup(
+        [
+            [BTN_NEW],
+            [BTN_MY_OBJECTS, BTN_BALANCE],
+        ],
+        resize_keyboard=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Til va alifbo
 # ---------------------------------------------------------------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     context.user_data.clear()
-    context.user_data["work_history"] = []
-    context.user_data["relatives"] = []
     await update.message.reply_text(
         "Assalomu alaykum! Bu bot MA’LUMOTNOMA va qarindoshlar toʻgʻrisidagi "
         "ma’lumot hujjatini tayyorlab beradi.\n\n"
+        "Quyidagi menyudan foydalaning 👇",
+        reply_markup=main_menu_keyboard(),
+    )
+    return ConversationHandler.END
+
+
+async def begin_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    context.user_data.clear()
+    context.user_data["work_history"] = []
+    context.user_data["relatives"] = []
+    await update.message.reply_text(
         "Hujjat tilini tanlang / Выберите язык документа:",
         reply_markup=lang_keyboard(),
     )
     return CHOOSING_LANG
+
+
+async def menu_my_objects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "📁 \"Mening ob'ektivkam\" boʻlimi tez orada ishga tushadi.",
+        reply_markup=main_menu_keyboard(),
+    )
+    return ConversationHandler.END
+
+
+async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    await update.message.reply_text(
+        "💰 Balans boʻlimi tez orada ishga tushadi.",
+        reply_markup=main_menu_keyboard(),
+    )
+    return ConversationHandler.END
 
 
 async def choose_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -412,7 +457,9 @@ def main():
     app = Application.builder().token(BOT_TOKEN).build()
 
     conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("start", start)],
+        entry_points=[
+            MessageHandler(filters.Regex(f"^{re.escape(BTN_NEW)}$"), begin_document)
+        ],
         states={
             CHOOSING_LANG: [CallbackQueryHandler(choose_lang, pattern="^lang_")],
             CHOOSING_SCRIPT: [CallbackQueryHandler(choose_script, pattern="^script_")],
@@ -443,6 +490,11 @@ def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
+
+    # Asosiy menyu tugmalari (ConversationHandler'dan tashqarida, doim ishlaydi)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_MY_OBJECTS)}$"), menu_my_objects))
+    app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_BALANCE)}$"), menu_balance))
 
     app.add_handler(conv_handler)
 
