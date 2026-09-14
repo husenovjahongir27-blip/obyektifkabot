@@ -45,13 +45,13 @@ FONT_BOLD_PATH = os.path.join(FONTS_DIR, "DejaVuSans-Bold.ttf")
 
 
 def _uz(text):
-    """Matndagi o\' va g\' yozuvlarini adabiy oʻ/gʻ ko\'rinishiga keltiradi."""
+    """Matndagi o' va g' yozuvlarini adabiy oʻ/gʻ ko'rinishiga keltiradi;
+    boshqa joylardagi tutuq belgisiga tegmaydi (uni oʻ/gʻ bilan aralashtirmaslik uchun)."""
     if text is None:
         return ""
     text = str(text)
-    text = text.replace("’", "ʻ").replace("‘", "ʻ").replace("ʼ", "ʻ")
     import re
-    return re.sub(r"([oOgG])['ʻ]", r"\1ʻ", text)
+    return re.sub(r"([oOgG])['’‘ʼ]", r"\1ʻ", text)
 
 
 def _set_docx_paragraph_format(paragraph, align=None):
@@ -206,8 +206,8 @@ def generate_malumotnoma_docx(lang_key: str, data: dict) -> str:
     for section in doc.sections:
         section.left_margin = Cm(2.5)
         section.right_margin = Cm(1.5)
-        section.top_margin = Cm(1.5)
-        section.bottom_margin = Cm(1.5)
+        section.top_margin = Cm(2.0)
+        section.bottom_margin = Cm(2.0)
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -322,8 +322,8 @@ def generate_relatives_docx(lang_key: str, data: dict) -> str:
     for section in doc.sections:
         section.left_margin = Cm(1.5)
         section.right_margin = Cm(1.5)
-        section.top_margin = Cm(1.5)
-        section.bottom_margin = Cm(1.5)
+        section.top_margin = Cm(2.0)
+        section.bottom_margin = Cm(2.0)
 
     title_text = L["rel_title_tpl"].format(name=data["full_name"])
     for line in title_text.split("\n"):
@@ -414,7 +414,7 @@ def generate_malumotnoma_pdf(lang_key: str, data: dict) -> str:
     doc = SimpleDocTemplate(
         path, pagesize=A4,
         leftMargin=2.2 * rl_cm, rightMargin=1.5 * rl_cm,
-        topMargin=1.5 * rl_cm, bottomMargin=1.5 * rl_cm,
+        topMargin=2*rl_cm, bottomMargin=2*rl_cm,
     )
     elements = [
         Paragraph(L["doc_title"], title_style),
@@ -482,7 +482,7 @@ def generate_relatives_pdf(lang_key: str, data: dict) -> str:
     doc = SimpleDocTemplate(
         path, pagesize=A4,
         leftMargin=1.3 * rl_cm, rightMargin=1.3 * rl_cm,
-        topMargin=1.5 * rl_cm, bottomMargin=1.5 * rl_cm,
+        topMargin=2*rl_cm, bottomMargin=2*rl_cm,
     )
 
     title_text = L["rel_title_tpl"].format(name=data["full_name"])
@@ -583,8 +583,8 @@ def generate_combined_docx(lang_key: str, data: dict) -> str:
         section.left_margin = Cm(2.5)
         section.right_margin = Cm(1.5)
         # Birinchi sahifada mehnat faoliyati va sahifa ajratgichi birga sig\'ishi uchun.
-        section.top_margin = Cm(1.0)
-        section.bottom_margin = Cm(1.0)
+        section.top_margin = Cm(2.0)
+        section.bottom_margin = Cm(2.0)
 
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -714,7 +714,7 @@ def generate_combined_pdf(lang_key: str, data: dict) -> str:
     L = LABELS[lang_key]
     title_style, name_style, cell_style, cell_bold_style, header_style = _pdf_styles()
     path = _unique_path("pdf")
-    doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=2.2*rl_cm, rightMargin=1.5*rl_cm, topMargin=1.5*rl_cm, bottomMargin=1.5*rl_cm)
+    doc = SimpleDocTemplate(path, pagesize=A4, leftMargin=2.2*rl_cm, rightMargin=1.5*rl_cm, topMargin=2*rl_cm, bottomMargin=2*rl_cm)
     elements = [Paragraph(_uz(L["doc_title"]), title_style), Spacer(1, 3)]
     photo_stream = _photo_3x4_stream(data)
     if photo_stream:
