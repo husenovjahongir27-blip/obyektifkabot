@@ -123,6 +123,15 @@ async def get_document_file(doc_id: int, chat_id: int):
     return row
 
 
+async def get_all_user_ids() -> list[int]:
+    if not DATABASE_URL:
+        return []
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT chat_id FROM users")
+    return [r["chat_id"] for r in rows]
+
+
 async def get_user_count() -> int:
     if not DATABASE_URL:
         return 0
