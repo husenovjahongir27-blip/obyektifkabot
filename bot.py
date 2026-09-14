@@ -10,6 +10,7 @@ Ishga tushirish:
     4) python bot.py
 """
 
+import io
 import logging
 import os
 import re
@@ -176,13 +177,44 @@ async def menu_my_objects(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         return ConversationHandler.END
 
-    lines = ["📁 Sizning ob'ektivkalaringiz:\n"]
-    for i, row in enumerate(rows, start=1):
+    buttons = []
+    for row in rows:
         sana = row["created_at"].strftime("%d.%m.%Y %H:%M")
-        lines.append(f"{i}. {row['full_name']} — {row['fmt'].upper()} ({sana})")
+        label = f"{row['full_name']} — {row['fmt'].upper()} ({sana})"
+        buttons.append(
+            [InlineKeyboardButton(label, callback_data=f"resend_doc:{row['id']}")]
+        )
 
-    await update.message.reply_text("\n".join(lines), reply_markup=main_menu_keyboard())
+    await update.message.reply_text(
+        "📁 Sizning ob'ektivkalaringiz (yuklab olish uchun bosing):",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
     return ConversationHandler.END
+
+
+async def resend_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    try:
+        doc_id = int(query.data.split(":", 1)[1])
+    except (IndexError, ValueError):
+        return
+
+    row = await db.get_document_file(doc_id, query.message.chat_id)
+    if row is None or row["file_data"] is None:
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text="⚠️ Bu hujjat topilmadi (eski hujjatlar uchun fayl saqlanmagan bo'lishi mumkin).",
+        )
+        return
+
+    bio = io.BytesIO(row["file_data"])
+    bio.name = row["file_name"] or "ob'ektivka.docx"
+    await context.bot.send_document(
+        chat_id=query.message.chat_id,
+        document=bio,
+        filename=row["file_name"],
+    )
 
 
 async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -433,6 +465,9 @@ async def choose_format_and_send(update, context):
         return ConversationHandler.END
 
     with open(path, "rb") as f:
+        file_bytes = f.read()
+
+    with open(path, "rb") as f:
         await context.bot.send_document(
             chat_id=query.message.chat_id,
             document=f,
@@ -441,7 +476,13 @@ async def choose_format_and_send(update, context):
         )
     os.remove(path)
 
-    await db.log_document(query.message.chat_id, data.get("full_name", "—"), fmt)
+    await db.log_document(
+        query.message.chat_id,
+        data.get("full_name", "—"),
+        fmt,
+        os.path.basename(path),
+        file_bytes,
+    )
 
     photo_path = context.user_data.get("photo_path")
     if photo_path and os.path.exists(photo_path):
@@ -527,6 +568,7 @@ def main():
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_MY_OBJECTS)}$"), menu_my_objects))
     app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_BALANCE)}$"), menu_balance))
+    app.add_handler(CallbackQueryHandler(resend_document, pattern=r"^resend_doc:\d+$"))
 
     app.add_handler(conv_handler)
 
