@@ -44,6 +44,16 @@ FONT_REGULAR_PATH = os.path.join(FONTS_DIR, "DejaVuSans.ttf")
 FONT_BOLD_PATH = os.path.join(FONTS_DIR, "DejaVuSans-Bold.ttf")
 
 
+def _uz(text):
+    """Matndagi o\' va g\' yozuvlarini adabiy oʻ/gʻ ko\'rinishiga keltiradi."""
+    if text is None:
+        return ""
+    text = str(text)
+    text = text.replace("’", "ʻ").replace("‘", "ʻ").replace("ʼ", "ʻ")
+    import re
+    return re.sub(r"([oOgG])['ʻ]", r"\1ʻ", text)
+
+
 def _set_docx_paragraph_format(paragraph, align=None):
     """Barcha Word matnlarini 14 pt va 1.5 qator oralig'ida saqlaydi."""
     if align is not None:
@@ -83,14 +93,3 @@ def _add_cell_border(cell, color="000000", sz="8"):
         element.set(qn("w:sz"), sz)
         element.set(qn("w:space"), "0")
         element.set(qn("w:color"), color)
-
-
-def _framed_photo_docx(photo_stream):
-    """Namuna kabi 3x4 suratni ingichka qora ramka ichida qaytaradi."""
-    if not photo_stream:
-        return None
-    table = Document().add_table(rows=1, cols=1)
-    table.autofit = False
-    cell = table.cell(0, 0)
-    cell.width = Cm(3.0)
-    cell.height = Cm(4.0)
