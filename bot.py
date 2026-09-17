@@ -527,6 +527,9 @@ async def main():
             "ичига BOT_TOKEN=... деб ёзинг (токенни @BotFather дан олинг)."
         )
     bot = Bot(token=BOT_TOKEN)
+    # Agar avval botga webhook o'rnatilgan bo'lsa, uni o'chirish shart —
+    # aks holda getUpdates (polling) bilan "Conflict" xatosi chiqadi.
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 
