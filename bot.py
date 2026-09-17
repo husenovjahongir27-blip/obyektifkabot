@@ -17,7 +17,7 @@ from aiogram.types import (
 from dotenv import load_dotenv
 
 from states import ObyektivkaForm
-from doc_generator import generate_malumotnoma_docx, convert_docx_to_pdf
+from generator import generate_malumotnoma_docx, convert_docx_to_pdf
 from uz_translit import normalize_text
 
 load_dotenv()
