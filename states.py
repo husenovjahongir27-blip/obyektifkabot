@@ -32,3 +32,7 @@ class ObyektivkaForm(StatesGroup):
     relative_job = State()
     relative_address = State()
     relative_more = State()
+
+
+class AdminBroadcastForm(StatesGroup):
+    waiting_message = State()
