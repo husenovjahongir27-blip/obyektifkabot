@@ -1,172 +1,86 @@
-# -*- coding: utf-8 -*-
 """
-Hujjatdagi maydon nomlari (LABELS) va botning savollari (PROMPTS) —
-uz_latin / uz_cyrillic / ru uchun alohida.
+Rasmiy MA'LUMOTNOMA namunasidagi band nomlari (label) — uchta variantda:
+    - uz_cyr — o'zbekcha, kirill (namunadagi asl matn, dasturiy nusxa
+      ko'chirish orqali olingan — imlo xatosi bo'lmasligi uchun)
+    - uz_lat — o'zbekcha, lotin (uz_cyr dan avtomatik transliteratsiya
+      qilingan, qo'lda qayta terilmagan)
+    - ru — ruscha (mazmunan tarjima qilingan, chunki bu alifbo emas,
+      alohida til)
+
+get_label_set(variant) shu uchtadan birini SimpleNamespace ko'rinishida
+qaytaradi.
 """
 
-LABELS = {
-    "uz_latin": {
-        "doc_title": "MA’LUMOTNOMA",
-        "birth_date": "Tugʻilgan yili:",
-        "birth_place": "Tugʻilgan joyi:",
-        "nationality": "Millati:",
-        "education_level": "Ma’lumoti:",
-        "education_detail": "Qachon, qaysi oʻquv yurtini tugatgan:",
-        "specialty": "Mutaxassisligi:",
-        "academic_degree": "Ilmiy darajasi:",
-        "academic_title": "Ilmiy unvoni:",
-        "foreign_lang": "Qaysi chet tillarini biladi:",
-        "military_title": "Harbiy (maxsus) unvoni:",
-        "state_awards": "Davlat mukofotlari bilan taqdirlanganmi (qanday):",
-        "work_history_heading": "MEHNAT FAOLIYATI:",
-        "rel_title_tpl": "{name}ning yaqin qarindoshlari toʻgʻrisida\nMA’LUMOT",
-        "rel_col_relation": "Qarindoshligi",
-        "rel_col_name": "Familiyasi, ismi va otasining ismi",
-        "rel_col_birth": "Tugʻilgan yili va joyi",
-        "rel_col_work": "Ish joyi va lavozimi",
-        "rel_col_address": "Turar joyi",
-    },
-    "uz_cyrillic": {
-        "doc_title": "МАЪЛУМОТНОМА",
-        "birth_date": "Туғилган йили:",
-        "birth_place": "Туғилган жойи:",
-        "nationality": "Миллати:",
-        "education_level": "Маълумоти:",
-        "education_detail": "Қачон, қайси ўқув юртини тугатган:",
-        "specialty": "Мутахассислиги:",
-        "academic_degree": "Илмий даражаси:",
-        "academic_title": "Илмий унвони:",
-        "foreign_lang": "Қайси чет тиллари билади:",
-        "military_title": "Ҳарбий (махсус) унвони:",
-        "state_awards": "Давлат мукофотлари билан тақдирланганми (қандай):",
-        "work_history_heading": "МЕҲНАТ ФАОЛИЯТИ:",
-        "rel_title_tpl": "{name}нинг яқин қариндошлари тўғрисида\nМАЪЛУМОТ",
-        "rel_col_relation": "Қариндошлиги",
-        "rel_col_name": "Фамилияси, исми ва отасининг исми",
-        "rel_col_birth": "Туғилган йили ва жойи",
-        "rel_col_work": "Иш жойи ва лавозими",
-        "rel_col_address": "Турар жойи",
-    },
-    "ru": {
-        "doc_title": "СПРАВКА",
-        "birth_date": "Год рождения:",
-        "birth_place": "Место рождения:",
-        "nationality": "Национальность:",
-        "education_level": "Образование:",
-        "education_detail": "Когда и какое учебное заведение окончил(а):",
-        "specialty": "Специальность:",
-        "academic_degree": "Учёная степень:",
-        "academic_title": "Учёное звание:",
-        "foreign_lang": "Какими иностранными языками владеет:",
-        "military_title": "Воинское (специальное) звание:",
-        "state_awards": "Награждён(а) ли государственными наградами (какими):",
-        "work_history_heading": "ТРУДОВАЯ ДЕЯТЕЛЬНОСТЬ:",
-        "rel_title_tpl": "СВЕДЕНИЯ\nо близких родственниках {name}",
-        "rel_col_relation": "Родство",
-        "rel_col_name": "Фамилия, имя и отчество",
-        "rel_col_birth": "Год и место рождения",
-        "rel_col_work": "Место работы и должность",
-        "rel_col_address": "Место жительства",
-    },
+from types import SimpleNamespace
+
+from uz_translit import to_latin
+
+# ==================== O'zbekcha - Kirill (namunadan aynan) ====================
+
+_UZ_CYR = dict(
+    TITLE="МАЪЛУМОТНОМА",
+    BIRTH_LABELS=["Туғилган йили:", "Туғилган жойи:"],
+    NATIONALITY_LABELS=["Миллати:", "Партиявийлиги:"],
+    EDUCATION_LABELS=["Маълумоти:", "Тамомлаган:"],
+    SPECIALTY_LABEL="Маълумоти бўйича мутахассислиги:",
+    DEGREE_LABELS=["Илмий даражаси:", "Илмий унвони:"],
+    LANGUAGE_LABELS=["Қайси чет тилларини билади:", "Ҳарбий (махсус) унвони:"],
+    STATE_AWARDS_LABEL="Давлат мукофотлари ва премиялари билан тақдирланганми (қанақа):",
+    DEPT_AWARDS_LABEL="Идоравий мукофотлар билан тақдирланганми (қанақа):",
+    ELECTED_MEMBER_LABEL=(
+        "Халқ депутатлари, республика, вилоят, шаҳар ва туман Кенгаши "
+        "депутатими ёки бошқа сайланадиган органларнинг аъзосими "
+        "(тўлиқ кўрсатилиши лозим):"
+    ),
+    WORK_HEADING="МЕҲНАТ ФАОЛИЯТИ",
+    NOTES_LABEL="Изоҳ:",
+    PHOTO_PLACEHOLDER=(
+        "3х4 см, охирги 3 ой давомида олинган рангли фотосурат, "
+        "электрон кўринишда (расмий кийимда, оқ фонда)."
+    ),
+)
+
+# ==================== O'zbekcha - Lotin (avtomatik, uz_cyr dan) ====================
+
+_LIST_KEYS = {"BIRTH_LABELS", "NATIONALITY_LABELS", "EDUCATION_LABELS",
+              "DEGREE_LABELS", "LANGUAGE_LABELS"}
+
+_UZ_LAT = {
+    key: ([to_latin(v) for v in value] if key in _LIST_KEYS else to_latin(value))
+    for key, value in _UZ_CYR.items()
 }
 
-PROMPTS = {
-    "uz_latin": {
-        "full_name": "F.I.Sh. (toʻliq, masalan: Husenov Jahongir Qoʻshmurod oʻgʻli):",
-        "photo_prompt": "3x4 rasmni yuboring (Telegram orqali oddiy foto sifatida):",
-        "birth_date": "Tugʻilgan yili (sana bilan, masalan: 08.11.2001 y.):",
-        "birth_place": "Tugʻilgan joyi (masalan: Buxoro viloyati, Shofirkon tumani):",
-        "nationality": "Millatingiz:",
-        "education_level": "Ma’lumotingiz (masalan: Oliy / Tugallanmagan oliy / Oʻrta maxsus):",
-        "education_detail": "Qachon, qaysi oʻquv yurtini tugatgan (yoki hozir qaysi kursda oʻqiyotgani):",
-        "specialty": "Mutaxassisligingiz:",
-        "academic_degree": "Ilmiy darajasi (boʻlmasa \"Yoʻq\" deb yozing):",
-        "academic_title": "Ilmiy unvoni (boʻlmasa \"Yoʻq\" deb yozing):",
-        "foreign_lang": "Qaysi chet tillarini bilasiz (boʻlmasa \"-\" deb yozing):",
-        "military_title": "Harbiy (maxsus) unvoningiz (boʻlmasa \"Yoʻq\" deb yozing):",
-        "state_awards": "Davlat mukofotlari bilan taqdirlanganmisiz? (qanday, yoki \"Taqdirlanmagan\"):",
-        "work_years": "Mehnat faoliyati — davri (masalan: 2019-2023-yillar):",
-        "work_position": "Shu davrdagi ish/lavozim nomini yozing:",
-        "work_more": "Yana bitta mehnat faoliyati bandini qoʻshamizmi?",
-        "ask_relatives": "Yaqin qarindoshlari toʻgʻrisida ma’lumot hujjati ham kerakmi?",
-        "rel_relation": "Qarindoshlik turini tanlang:",
-        "rel_name": "Uning F.I.Sh. (toʻliq):",
-        "rel_birth": "Tugʻilgan yili va joyi:",
-        "rel_work": "Ish joyi va lavozimi:",
-        "rel_address": "Turar joyi (manzili):",
-        "rel_more": "Yana bitta qarindosh qoʻshamizmi?",
-        "choose_format": "Faylni qaysi formatda olishni xohlaysiz?",
-        "done": "Hujjat(lar) tayyorlanmoqda... ⏳",
-    },
-    "uz_cyrillic": {
-        "full_name": "Ф.И.Ш. (тўлиқ, масалан: Ҳусенов Жаҳонгир Қўшмурод ўғли):",
-        "photo_prompt": "3x4 расмни юборинг (Telegram орқали оддий фото сифатида):",
-        "birth_date": "Туғилган йили (сана билан, масалан: 08.11.2001 й.):",
-        "birth_place": "Туғилган жойи (масалан: Бухоро вилояти, Шофиркон тумани):",
-        "nationality": "Миллатингиз:",
-        "education_level": "Маълумотингиз (масалан: Олий / Тугалланмаган олий / Ўрта махсус):",
-        "education_detail": "Қачон, қайси ўқув юртини тугатган (ёки ҳозир қайси курсда ўқиётгани):",
-        "specialty": "Мутахассислигингиз:",
-        "academic_degree": "Илмий даражаси (бўлмаса \"Йўқ\" деб ёзинг):",
-        "academic_title": "Илмий унвони (бўлмаса \"Йўқ\" деб ёзинг):",
-        "foreign_lang": "Қайси чет тилларини биласиз (бўлмаса \"-\" деб ёзинг):",
-        "military_title": "Ҳарбий (махсус) унвонингиз (бўлмаса \"Йўқ\" деб ёзинг):",
-        "state_awards": "Давлат мукофотлари билан тақдирланганмисиз? (қандай, ёки \"Тақдирланмаган\"):",
-        "work_years": "Меҳнат фаолияти — даври (масалан: 2019-2023-йиллар):",
-        "work_position": "Шу даврдаги иш/лавозим номини ёзинг:",
-        "work_more": "Яна битта меҳнат фаолияти бандини қўшамизми?",
-        "ask_relatives": "Яқин қариндошлари тўғрисида маълумот ҳужжати ҳам керакми?",
-        "rel_relation": "Қариндошлик турини танланг:",
-        "rel_name": "Унинг Ф.И.Ш. (тўлиқ):",
-        "rel_birth": "Туғилган йили ва жойи:",
-        "rel_work": "Иш жойи ва лавозими:",
-        "rel_address": "Турар жойи (манзили):",
-        "rel_more": "Яна битта қариндош қўшамизми?",
-        "choose_format": "Файлни қайси форматда олишни хоҳлайсиз?",
-        "done": "Ҳужжат(лар) тайёрланмоқда... ⏳",
-    },
-    "ru": {
-        "full_name": "Ф.И.О. (полностью, например: Хусенов Джахонгир Кушмуродович):",
-        "photo_prompt": "Отправьте фото 3x4 (обычной фотографией через Telegram):",
-        "birth_date": "Год рождения (с датой, например: 08.11.2001 г.):",
-        "birth_place": "Место рождения:",
-        "nationality": "Национальность:",
-        "education_level": "Образование (например: высшее / незаконченное высшее / среднее спец.):",
-        "education_detail": "Когда и какое учебное заведение окончил(а) (или на каком курсе учится):",
-        "specialty": "Специальность:",
-        "academic_degree": "Учёная степень (если нет — напишите \"Нет\"):",
-        "academic_title": "Учёное звание (если нет — напишите \"Нет\"):",
-        "foreign_lang": "Какими иностранными языками владеет (если нет — \"-\"):",
-        "military_title": "Воинское (специальное) звание (если нет — \"Нет\"):",
-        "state_awards": "Награждён(а) ли государственными наградами? (какими, или \"Не награждён(а)\"):",
-        "work_years": "Трудовая деятельность — период (например: 2019-2023 гг.):",
-        "work_position": "Должность/место работы за этот период:",
-        "work_more": "Добавить ещё один пункт трудовой деятельности?",
-        "ask_relatives": "Нужна ли также справка о близких родственниках?",
-        "rel_relation": "Выберите степень родства:",
-        "rel_name": "Его/её Ф.И.О. (полностью):",
-        "rel_birth": "Год и место рождения:",
-        "rel_work": "Место работы и должность:",
-        "rel_address": "Место жительства:",
-        "rel_more": "Добавить ещё одного родственника?",
-        "choose_format": "В каком формате отправить файл?",
-        "done": "Документ(ы) готовятся... ⏳",
-    },
+# ==================== Ruscha (mazmunan tarjima) ====================
+
+_RU = dict(
+    TITLE="СПРАВКА",
+    BIRTH_LABELS=["Дата рождения:", "Место рождения:"],
+    NATIONALITY_LABELS=["Национальность:", "Партийность:"],
+    EDUCATION_LABELS=["Образование:", "Окончил(а):"],
+    SPECIALTY_LABEL="Специальность по образованию:",
+    DEGREE_LABELS=["Учёная степень:", "Учёное звание:"],
+    LANGUAGE_LABELS=["Какими иностранными языками владеет:", "Воинское (специальное) звание:"],
+    STATE_AWARDS_LABEL="Награждён(а) ли государственными наградами и премиями (какими):",
+    DEPT_AWARDS_LABEL="Награждён(а) ли ведомственными наградами (какими):",
+    ELECTED_MEMBER_LABEL=(
+        "Является ли депутатом Кенгаша народных депутатов Республики, области, "
+        "города и района или членом других избираемых органов (указать полностью):"
+    ),
+    WORK_HEADING="ТРУДОВАЯ ДЕЯТЕЛЬНОСТЬ",
+    NOTES_LABEL="Примечание:",
+    PHOTO_PLACEHOLDER=(
+        "Цветная фотография 3x4 см, сделанная в течение последних 3 месяцев, "
+        "в электронном виде (в официальной одежде, на белом фоне)."
+    ),
+)
+
+_LABEL_SETS = {
+    "uz_cyr": _UZ_CYR,
+    "uz_lat": _UZ_LAT,
+    "ru": _RU,
 }
 
-RELATION_OPTIONS = {
-    "uz_latin": [
-        ("otasi", "Otasi"), ("onasi", "Onasi"), ("akasi", "Akasi"), ("opasi", "Opasi"),
-        ("ukasi", "Ukasi"), ("singlisi", "Singlisi"), ("turmush_urtogi", "Turmush oʻrtogʻi"),
-        ("boshqa", "Boshqa"),
-    ],
-    "uz_cyrillic": [
-        ("otasi", "Отаси"), ("onasi", "Онаси"), ("akasi", "Акаси"), ("opasi", "Опаси"),
-        ("ukasi", "Укаси"), ("singlisi", "Синглиси"), ("turmush_urtogi", "Турмуш ўртоғи"),
-        ("boshqa", "Бошқа"),
-    ],
-    "ru": [
-        ("otasi", "Отец"), ("onasi", "Мать"), ("akasi", "Брат"), ("opasi", "Сестра"),
-        ("turmush_urtogi", "Супруг(а)"), ("boshqa", "Другое"),
-    ],
-}
+
+def get_label_set(variant: str) -> SimpleNamespace:
+    """variant: 'uz_cyr', 'uz_lat' yoki 'ru'. Noma'lum bo'lsa 'uz_cyr' ishlatiladi."""
+    return SimpleNamespace(**_LABEL_SETS.get(variant, _UZ_CYR))
