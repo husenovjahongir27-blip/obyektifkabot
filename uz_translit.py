@@ -19,8 +19,8 @@ _LAT_DIGRAPHS = [
     ("ya", "я"),
     ("sh", "ш"),
     ("ch", "ч"),
-    ("o'", "ў"), ("oʻ", "ў"), ("oʼ", "ў"), ("o`", "ў"),
-    ("g'", "ғ"), ("gʻ", "ғ"), ("gʼ", "ғ"), ("g`", "ғ"),
+    ("o'", "ў"), ("oʻ", "ў"), ("oʼ", "ў"), ("o’", "ў"), ("o‘", "ў"), ("o`", "ў"),
+    ("g'", "ғ"), ("gʻ", "ғ"), ("gʼ", "ғ"), ("g’", "ғ"), ("g‘", "ғ"), ("g`", "ғ"),
 ]
 _LAT_DIGRAPHS.sort(key=lambda pair: -len(pair[0]))
 
@@ -31,10 +31,10 @@ _LAT_SINGLE_MAP = {
     "y": "й", "z": "з", "c": "с",
 }
 
-_APOSTROPHES = {"'", "ʼ", "`", "ʻ"}
+_APOSTROPHES = {"'", "ʼ", "‘", "’", "`", "ʻ"}
 _LAT_VOWELS = set("aeiou")
 
-_LATIN_WORD_RE = re.compile(r"[A-Za-zʻʼ`']+")
+_LATIN_WORD_RE = re.compile(r"[A-Za-zʻʼ‘’`\']+")
 
 
 def _has_cyrillic(text: str) -> bool:
@@ -93,108 +93,3 @@ def to_cyrillic(text: str) -> str:
         if _has_cyrillic(word):
             return word
         return _word_to_cyrillic(word)
-
-    return _LATIN_WORD_RE.sub(_replace, text)
-
-
-# ==================== Kirill -> Lotin ====================
-
-_CYR_DIGRAPHS = [
-    ("ё", "yo"), ("ю", "yu"), ("я", "ya"),
-    ("ш", "sh"), ("ч", "ch"),
-    ("ў", "o'"), ("ғ", "g'"),
-]
-
-_CYR_SINGLE_MAP = {
-    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d",
-    "ж": "j", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l",
-    "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s",
-    "т": "t", "у": "u", "ф": "f", "х": "x", "ц": "s", "щ": "sh",
-    "ъ": "'", "ь": "", "э": "e", "қ": "q", "ҳ": "h",
-}
-_CYR_VOWELS = set("аоуўиеэ")
-
-_CYR_WORD_RE = re.compile(r"[А-Яа-яЎўҚқҒғҲҳЁёʼ']+")
-
-
-def _has_latin(text: str) -> bool:
-    return bool(re.search(r"[A-Za-z]", text))
-
-
-def _word_to_latin(word: str) -> str:
-    out = []
-    i = 0
-    n = len(word)
-    word_is_upper = word.isupper() and len(word) > 1
-    while i < n:
-        ch = word[i]
-        low = ch.lower()
-        matched = False
-        for cyr, lat in _CYR_DIGRAPHS:
-            if low == cyr:
-                if word_is_upper:
-                    piece = lat.upper()
-                elif ch.isupper():
-                    piece = lat.capitalize()
-                else:
-                    piece = lat
-                out.append(piece)
-                i += 1
-                matched = True
-                break
-        if matched:
-            continue
-
-        if low == "е":
-            prev_is_vowel_or_start = (i == 0) or (word[i - 1].lower() in _CYR_VOWELS)
-            lat = "ye" if prev_is_vowel_or_start else "e"
-            if word_is_upper:
-                lat = lat.upper()
-            elif ch.isupper():
-                lat = lat.capitalize()
-            out.append(lat)
-            i += 1
-            continue
-
-        if low in _CYR_SINGLE_MAP:
-            lat = _CYR_SINGLE_MAP[low]
-            if ch.isupper() and lat:
-                lat = lat.upper() if word_is_upper else (lat[0].upper() + lat[1:])
-            out.append(lat)
-        else:
-            out.append(ch)
-        i += 1
-    return "".join(out)
-
-
-def to_latin(text: str) -> str:
-    """Matndagi kirillcha so'zlarni lotinga o'giradi (lotin qism o'zgarmaydi)."""
-    if not text:
-        return text
-
-    def _replace(match: "re.Match[str]") -> str:
-        word = match.group(0)
-        if _has_latin(word):
-            return word
-        return _word_to_latin(word)
-
-    return _CYR_WORD_RE.sub(_replace, text)
-
-
-# ==================== Umumiy dispetcher ====================
-
-def normalize_text(text: str, language: str, script: str | None) -> str:
-    """
-    Foydalanuvchi tanlagan til/skriptga mos ravishda matnni normallashtiradi:
-        - language == "ru": o'zgarishsiz qaytariladi (rus tilida kiritiladi deb faraz qilinadi)
-        - language == "uz" va script == "lat": kirillcha qismlar lotinga o'giriladi
-        - language == "uz" va script == "cyr" (yoki boshqa/aniqlanmagan): lotincha
-          qismlar kirillga o'giriladi
-    """
-    if not text:
-        return text
-    if language == "ru":
-        return text
-    if script == "lat":
-        return to_latin(text)
-    return to_cyrillic(text)
