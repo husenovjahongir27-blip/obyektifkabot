@@ -14,6 +14,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     CallbackQuery,
 )
+from aiohttp import web
 from dotenv import load_dotenv
 
 from states import ObyektivkaForm
@@ -520,6 +521,25 @@ async def generate_and_send(message: Message, state: FSMContext, bot: Bot | None
     await state.clear()
 
 
+async def _health(request):
+    return web.Response(text="OK")
+
+
+async def start_web_server():
+    """Render 'Web Service' $PORT ni tinglashni talab qiladi — aks holda
+    deploy 'Timed Out' bo'lib, eski jarayon bilan yangisi bir vaqtda
+    ishga tushib, Telegram 'Conflict' xatosiga olib keladi. Shu sabab
+    polling bilan bir qatorda mayda HTTP server ham ishga tushiriladi."""
+    app = web.Application()
+    app.router.add_get("/", _health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get("PORT", 10000))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    logging.info(f"Health-check HTTP server {port}-portda ishga tushdi")
+
+
 async def main():
     if not BOT_TOKEN:
         raise RuntimeError(
@@ -530,6 +550,7 @@ async def main():
     # Agar avval botga webhook o'rnatilgan bo'lsa, uni o'chirish shart —
     # aks holda getUpdates (polling) bilan "Conflict" xatosi chiqadi.
     await bot.delete_webhook(drop_pending_updates=True)
+    await start_web_server()
     await dp.start_polling(bot)
 
 
