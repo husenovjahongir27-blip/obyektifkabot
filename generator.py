@@ -2,10 +2,9 @@
 Rasmiy "MA'LUMOTNOMA" (obyektivka) hujjatini namunaga (2025-yilgi rasmiy shakl)
 mos ravishda yaratish uchun modul.
 
-Diqqat: bu modul faqat "obyektivka to'ldiruvchi" (asosiy shaxs) haqidagi
-bo'limni generatsiya qiladi. Namunadagi "yaqin qarindoshlari haqida"
-bo'limi (2-3 sahifalar) ushbu bot funksionalligiga kiritilmagan — foydalanuvchi
-so'rovi bo'yicha o'zgartirilmagan/tegilmagan holda qoldirilgan.
+Hujjat ikki sahifadan iborat:
+    1-sahifa — obyektivka to'ldiruvchi (asosiy shaxs) haqida ma'lumot
+    2-sahifa — uning yaqin qarindoshlari haqida jadval (agar kiritilgan bo'lsa)
 
 Namunada ko'rsatilgan rasmiylashtirish talablari qo'llanildi:
     - Shrift: Times New Roman, 11 pt
@@ -60,6 +59,22 @@ def _remove_table_borders(table):
     tblPr.append(borders)
 
 
+def _set_table_borders_single(table, size=4, color="000000"):
+    """Jadvalning barcha chiziqlarini yupqa, yagona chiziq (single) qilib chizadi
+    — 2-sahifadagi qarindoshlar jadvali namunadagidek chiziqli bo'lishi uchun."""
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    borders = OxmlElement('w:tblBorders')
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        el = OxmlElement(f'w:{edge}')
+        el.set(qn('w:val'), 'single')
+        el.set(qn('w:sz'), str(size))
+        el.set(qn('w:space'), '0')
+        el.set(qn('w:color'), color)
+        borders.append(el)
+    tblPr.append(borders)
+
+
 def _set_cell_border_box(cell, size=8, color="000000"):
     """Bitta katakka (foto uchun) chiziqli quti chizadi."""
     tcPr = cell._tc.get_or_add_tcPr()
@@ -95,8 +110,13 @@ def _cell_paragraph(cell, text="", bold=False, size=FONT_SIZE, align=None,
     p.paragraph_format.space_after = space_after
     p.paragraph_format.space_before = Pt(0)
     if text:
-        run = p.add_run(text)
-        _set_run_font(run, size=size, bold=bold, italic=italic)
+        lines = str(text).split("\n")
+        for idx, line in enumerate(lines):
+            if idx > 0:
+                run = p.add_run()
+                run.add_break()
+            run = p.add_run(line)
+            _set_run_font(run, size=size, bold=bold, italic=italic)
     return p
 
 
@@ -172,6 +192,48 @@ def _add_header_block(doc, data, photo_path, L):
     return table
 
 
+# ---------- 2-sahifa: yaqin qarindoshlari haqida jadval ----------
+
+def _add_relatives_page(doc, data, L):
+    relatives = data.get("relatives") or []
+    if not relatives:
+        return
+
+    doc.add_page_break()
+
+    full_name = data.get("full_name", "-")
+    title = f"{full_name}{L.RELATIVES_TITLE_SUFFIX}"
+    _doc_paragraph(doc, title, bold=True, size=Pt(12),
+                   align=WD_ALIGN_PARAGRAPH.CENTER, space_after=Pt(0))
+    _doc_paragraph(doc, L.RELATIVES_HEADING, bold=True, size=Pt(12),
+                   align=WD_ALIGN_PARAGRAPH.CENTER, space_after=Pt(10))
+
+    table = doc.add_table(rows=1, cols=5)
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    _set_table_borders_single(table)
+    _set_col_widths(table, [2.2, 3.7, 2.6, 5.2, 3.3])
+
+    header_cells = table.rows[0].cells
+    for cell, text in zip(header_cells, L.RELATIVES_HEADERS):
+        cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        _cell_paragraph(cell, text, bold=True, size=Pt(10),
+                        align=WD_ALIGN_PARAGRAPH.CENTER, space_after=Pt(0))
+
+    for rel in relatives:
+        row = table.add_row()
+        values = [
+            rel.get("relation", "-"),
+            rel.get("full_name", "-"),
+            rel.get("birth_info", "-"),
+            rel.get("job_info", "-"),
+            rel.get("address", "-"),
+        ]
+        for cell, value in zip(row.cells, values):
+            cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+            _cell_paragraph(cell, value or "-", size=Pt(10),
+                            align=WD_ALIGN_PARAGRAPH.CENTER, space_after=Pt(0))
+
+
 # ---------- Asosiy generatsiya funksiyasi ----------
 
 def generate_malumotnoma_docx(data: dict, output_path: str, photo_path: str | None = None,
@@ -183,7 +245,9 @@ def generate_malumotnoma_docx(data: dict, output_path: str, photo_path: str | No
         education_level, graduated_from, specialty,
         academic_degree, academic_title, foreign_languages, military_title,
         state_awards, departmental_awards, elected_member,
-        work_history (list[str]), notes
+        work_history (list[str]),
+        relatives (list[dict]) — har biri:
+            relation, full_name, birth_info, job_info, address
 
     lang_variant: "uz_cyr" (o'zbekcha-kirill), "uz_lat" (o'zbekcha-lotin)
                   yoki "ru" (ruscha) — hujjat band nomlari shu variantda chiqadi.
@@ -250,12 +314,8 @@ def generate_malumotnoma_docx(data: dict, output_path: str, photo_path: str | No
         run = p.add_run(entry)
         _set_run_font(run)
 
-    # Izoh
-    notes = (data.get("notes") or "").strip()
-    doc.add_paragraph().paragraph_format.space_after = Pt(2)
-    _doc_paragraph(doc, L.NOTES_LABEL, bold=True, space_after=Pt(4))
-    if notes and notes != "-":
-        _doc_paragraph(doc, notes, space_after=Pt(0))
+    # 2-sahifa: yaqin qarindoshlari haqida (agar kiritilgan bo'lsa)
+    _add_relatives_page(doc, data, L)
 
     doc.save(output_path)
     return output_path
