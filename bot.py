@@ -1,663 +1,534 @@
-# -*- coding: utf-8 -*-
-"""
-MA’LUMOTNOMA va (ixtiyoriy) Qarindoshlar to'g'risida ma’lumot hujjatini
-tayyorlovchi Telegram bot.
-
-Ishga tushirish:
-    1) pip install -r requirements.txt
-    2) fonts/DejaVuSans.ttf va fonts/DejaVuSans-Bold.ttf fayllarini joylang (PDF uchun)
-    3) BOT_TOKEN muhit oʻzgaruvchisini o'rnating
-    4) python bot.py
-"""
-
-import io
+import asyncio
 import logging
 import os
-import re
+import tempfile
 
-from telegram import (
-    InlineKeyboardButton,
+from aiogram import Bot, Dispatcher, F
+from aiogram.filters import CommandStart, Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    Message,
+    FSInputFile,
     InlineKeyboardMarkup,
-    ReplyKeyboardMarkup,
-    Update,
+    InlineKeyboardButton,
+    CallbackQuery,
 )
-from telegram.ext import (
-    Application,
-    CallbackQueryHandler,
-    CommandHandler,
-    ContextTypes,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-)
+from dotenv import load_dotenv
 
-import db
-from generator import generate
-from labels import PROMPTS, RELATION_OPTIONS
+from states import ObyektivkaForm
+from doc_generator import generate_malumotnoma_docx, convert_docx_to_pdf
+from uz_translit import normalize_text
 
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
-)
-logger = logging.getLogger(__name__)
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN", "PUT_YOUR_TOKEN_HERE")
-ADMIN_ID = os.environ.get("ADMIN_ID")
+logging.basicConfig(level=logging.INFO)
 
-# Asosiy menyu tugmalari (doimiy pastki klaviatura)
-BTN_NEW = "🟢 Yangi ob'ektivka"
-BTN_MY_OBJECTS = "📁 Mening ob'ektivkam"
-BTN_BALANCE = "💰 Balans"
+dp = Dispatcher(storage=MemoryStorage())
 
 
-def normalize_uzbek_text(value: str) -> str:
-    """o'/g' kabi yozuvlarni adabiy o'zbekcha oʻ/gʻ ko'rinishiga o'tkazadi."""
-    value = value.strip()
-    value = value.replace("’", "ʻ").replace("‘", "ʻ").replace("ʼ", "ʻ")
-    value = re.sub(r"([oOgG])['ʻ]", r"\1ʻ", value)
-    return value
-
-(
-    CHOOSING_LANG,
-    CHOOSING_SCRIPT,
-    FULL_NAME,
-    BIRTH_DATE,
-    BIRTH_PLACE,
-    NATIONALITY,
-    EDU_LEVEL,
-    EDU_DETAIL,
-    SPECIALTY,
-    ACAD_DEGREE,
-    ACAD_TITLE,
-    FOREIGN_LANG,
-    MILITARY_TITLE,
-    STATE_AWARDS,
-    WORK_YEARS,
-    WORK_POSITION,
-    WORK_LOOP,
-    ASK_RELATIVES,
-    REL_RELATION,
-    REL_NAME,
-    REL_BIRTH,
-    REL_WORK,
-    REL_ADDRESS,
-    REL_LOOP,
-    CHOOSING_FORMAT,
-    PHOTO,
-) = range(26)
-
-BROADCAST_WAITING = 100
+def _lang_variant(data: dict) -> str:
+    """FSM data'dagi til/skript tanloviga qarab label variantini aniqlaydi."""
+    if data.get("language") == "ru":
+        return "ru"
+    if data.get("script") == "lat":
+        return "uz_lat"
+    return "uz_cyr"
 
 
-def t(context, key):
-    lang = context.user_data["lang_key"]
-    return PROMPTS[lang][key]
+async def normalize_input(state: FSMContext, text: str) -> str:
+    data = await state.get_data()
+    language = data.get("language", "uz")
+    script = data.get("script", "cyr")
+    return normalize_text(text, language, script)
 
 
-def lang_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🇺🇿 Oʻzbekcha", callback_data="lang_uz")],
-        [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-    ])
+async def skip_default(state: FSMContext) -> str:
+    data = await state.get_data()
+    variant = _lang_variant(data)
+    return {"uz_cyr": "йўқ", "uz_lat": "yo'q", "ru": "нет"}.get(variant, "йўқ")
 
 
-def script_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("Lotin", callback_data="script_latin")],
-        [InlineKeyboardButton("Кирилл", callback_data="script_cyrillic")],
-    ])
-
-
-def yes_no_keyboard(yes_data, no_data, lang_key):
-    if lang_key == "ru":
-        yes_text, no_text = "Да", "Нет"
-    elif lang_key == "uz_cyrillic":
-        yes_text, no_text = "Ҳа", "Йўқ"
-    else:
-        yes_text, no_text = "Ha", "Yoʻq"
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(yes_text, callback_data=yes_data),
-         InlineKeyboardButton(no_text, callback_data=no_data)],
-    ])
-
-
-def relation_keyboard(lang_key):
-    options = RELATION_OPTIONS[lang_key]
-    rows = [[InlineKeyboardButton(label, callback_data=f"relation_{key}")] for key, label in options]
-    return InlineKeyboardMarkup(rows)
-
-
-def format_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📄 PDF", callback_data="fmt_pdf")],
-        [InlineKeyboardButton("📝 DOCX (Word)", callback_data="fmt_docx")],
-    ])
-
-
-def main_menu_keyboard():
-    return ReplyKeyboardMarkup(
-        [
-            [BTN_NEW],
-            [BTN_MY_OBJECTS, BTN_BALANCE],
-        ],
-        resize_keyboard=True,
+def skip_kb(text: str = "Йўқ / ўтказиб юбориш") -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text=text, callback_data="skip")]]
     )
 
 
-# ---------------------------------------------------------------------------
-# Til va alifbo
-# ---------------------------------------------------------------------------
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
-    await db.register_user(update.effective_chat.id, update.effective_user.username)
-    await update.message.reply_text(
-        "Assalomu alaykum! Bu bot MA’LUMOTNOMA va qarindoshlar toʻgʻrisidagi "
-        "ma’lumot hujjatini tayyorlab beradi.\n\n"
-        "Quyidagi menyudan foydalaning 👇",
-        reply_markup=main_menu_keyboard(),
-    )
-    return ConversationHandler.END
-
-
-async def begin_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.clear()
-    context.user_data["work_history"] = []
-    context.user_data["relatives"] = []
-    await update.message.reply_text(
-        "Hujjat tilini tanlang / Выберите язык документа:",
-        reply_markup=lang_keyboard(),
-    )
-    return CHOOSING_LANG
-
-
-async def menu_my_objects(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    rows = await db.get_user_documents(update.effective_chat.id)
-    if not rows:
-        await update.message.reply_text(
-            "📁 Sizda hali yaratilgan ob'ektivka yo'q.\n"
-            "Boshlash uchun \"🟢 Yangi ob'ektivka\" tugmasini bosing.",
-            reply_markup=main_menu_keyboard(),
-        )
-        return ConversationHandler.END
-
-    buttons = []
-    for row in rows:
-        sana = row["created_at"].strftime("%d.%m.%Y %H:%M")
-        label = f"{row['full_name']} — {row['fmt'].upper()} ({sana})"
-        buttons.append(
-            [InlineKeyboardButton(label, callback_data=f"resend_doc:{row['id']}")]
-        )
-
-    await update.message.reply_text(
-        "📁 Sizning ob'ektivkalaringiz (yuklab olish uchun bosing):",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
-    return ConversationHandler.END
-
-
-async def resend_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    query = update.callback_query
-    await query.answer()
-    try:
-        doc_id = int(query.data.split(":", 1)[1])
-    except (IndexError, ValueError):
-        return
-
-    row = await db.get_document_file(doc_id, query.message.chat_id)
-    if row is None or row["file_data"] is None:
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="⚠️ Bu hujjat topilmadi (eski hujjatlar uchun fayl saqlanmagan bo'lishi mumkin).",
-        )
-        return
-
-    bio = io.BytesIO(row["file_data"])
-    bio.name = row["file_name"] or "ob'ektivka.docx"
-    await context.bot.send_document(
-        chat_id=query.message.chat_id,
-        document=bio,
-        filename=row["file_name"],
+def more_or_done_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="➕ Яна қўшиш", callback_data="more"),
+                InlineKeyboardButton(text="✅ Тугатиш", callback_data="done"),
+            ]
+        ]
     )
 
 
-async def menu_balance(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    await update.message.reply_text(
-        "💰 Balans boʻlimi tez orada ishga tushadi.",
-        reply_markup=main_menu_keyboard(),
-    )
-    return ConversationHandler.END
-
-
-async def choose_lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    if query.data == "lang_uz":
-        await query.edit_message_text("Alifboni tanlang:", reply_markup=script_keyboard())
-        return CHOOSING_SCRIPT
-    context.user_data["lang_key"] = "ru"
-    await query.edit_message_text(t(context, "full_name"))
-    return FULL_NAME
-
-
-async def choose_script(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    query = update.callback_query
-    await query.answer()
-    context.user_data["lang_key"] = "uz_latin" if query.data == "script_latin" else "uz_cyrillic"
-    await query.edit_message_text(t(context, "full_name"))
-    return FULL_NAME
-
-
-# ---------------------------------------------------------------------------
-# Asosiy shaxsiy maydonlar (ketma-ket)
-# ---------------------------------------------------------------------------
-async def get_full_name(update, context):
-    context.user_data["full_name"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "photo_prompt"))
-    return PHOTO
-
-
-async def get_photo(update, context):
-    """Telegramdan 3x4 rasm uchun suratni qabul qiladi."""
-    if not update.message.photo:
-        await update.message.reply_text(t(context, "photo_prompt"))
-        return PHOTO
-
-    photo = update.message.photo[-1]
-    tg_file = await context.bot.get_file(photo.file_id)
-    photo_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
-    os.makedirs(photo_dir, exist_ok=True)
-    photo_path = os.path.join(photo_dir, f"photo_{update.effective_user.id}_{photo.file_unique_id}.jpg")
-    await tg_file.download_to_drive(photo_path)
-    context.user_data["photo_path"] = photo_path
-
-    await update.message.reply_text(t(context, "birth_date"))
-    return BIRTH_DATE
-
-
-async def get_birth_date(update, context):
-    context.user_data["birth_date"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "birth_place"))
-    return BIRTH_PLACE
-
-
-async def get_birth_place(update, context):
-    context.user_data["birth_place"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "nationality"))
-    return NATIONALITY
-
-
-async def get_nationality(update, context):
-    context.user_data["nationality"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "education_level"))
-    return EDU_LEVEL
-
-
-async def get_edu_level(update, context):
-    context.user_data["education_level"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "education_detail"))
-    return EDU_DETAIL
-
-
-async def get_edu_detail(update, context):
-    context.user_data["education_detail"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "specialty"))
-    return SPECIALTY
-
-
-async def get_specialty(update, context):
-    context.user_data["specialty"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "academic_degree"))
-    return ACAD_DEGREE
-
-
-async def get_acad_degree(update, context):
-    context.user_data["academic_degree"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "academic_title"))
-    return ACAD_TITLE
-
-
-async def get_acad_title(update, context):
-    context.user_data["academic_title"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "foreign_lang"))
-    return FOREIGN_LANG
-
-
-async def get_foreign_lang(update, context):
-    context.user_data["foreign_lang"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "military_title"))
-    return MILITARY_TITLE
-
-
-async def get_military_title(update, context):
-    context.user_data["military_title"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "state_awards"))
-    return STATE_AWARDS
-
-
-async def get_state_awards(update, context):
-    context.user_data["state_awards"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "work_years"))
-    return WORK_YEARS
-
-
-# ---------------------------------------------------------------------------
-# Mehnat faoliyati (takrorlanuvchi bandlar)
-# ---------------------------------------------------------------------------
-async def get_work_years(update, context):
-    context.user_data["_current_work_years"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "work_position"))
-    return WORK_POSITION
-
-
-async def get_work_position(update, context):
-    years = context.user_data.pop("_current_work_years")
-    position = normalize_uzbek_text(update.message.text)
-    context.user_data["work_history"].append({"years": years, "position": position})
-    lang_key = context.user_data["lang_key"]
-    await update.message.reply_text(
-        t(context, "work_more"), reply_markup=yes_no_keyboard("work_more_yes", "work_more_no", lang_key)
-    )
-    return WORK_LOOP
-
-
-async def work_loop_decision(update, context):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "work_more_yes":
-        await query.edit_message_text(t(context, "work_years"))
-        return WORK_YEARS
-    lang_key = context.user_data["lang_key"]
-    await query.edit_message_text(
-        t(context, "ask_relatives"), reply_markup=yes_no_keyboard("rel_yes", "rel_no", lang_key)
-    )
-    return ASK_RELATIVES
-
-
-# ---------------------------------------------------------------------------
-# Qarindoshlar (ixtiyoriy, takrorlanuvchi bandlar)
-# ---------------------------------------------------------------------------
-async def ask_relatives_decision(update, context):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "rel_no":
-        await query.edit_message_text(t(context, "choose_format"), reply_markup=format_keyboard())
-        return CHOOSING_FORMAT
-    lang_key = context.user_data["lang_key"]
-    await query.edit_message_text(t(context, "rel_relation"), reply_markup=relation_keyboard(lang_key))
-    return REL_RELATION
-
-
-async def get_rel_relation(update, context):
-    query = update.callback_query
-    await query.answer()
-    lang_key = context.user_data["lang_key"]
-    key = query.data.replace("relation_", "")
-    label_map = dict(RELATION_OPTIONS[lang_key])
-    context.user_data["_current_relation_label"] = label_map.get(key, key)
-    await query.edit_message_text(t(context, "rel_name"))
-    return REL_NAME
-
-
-async def get_rel_name(update, context):
-    context.user_data["_current_rel_name"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "rel_birth"))
-    return REL_BIRTH
-
-
-async def get_rel_birth(update, context):
-    context.user_data["_current_rel_birth"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "rel_work"))
-    return REL_WORK
-
-
-async def get_rel_work(update, context):
-    context.user_data["_current_rel_work"] = normalize_uzbek_text(update.message.text)
-    await update.message.reply_text(t(context, "rel_address"))
-    return REL_ADDRESS
-
-
-async def get_rel_address(update, context):
-    address = normalize_uzbek_text(update.message.text)
-    context.user_data["relatives"].append({
-        "relation_label": context.user_data.pop("_current_relation_label"),
-        "name": context.user_data.pop("_current_rel_name"),
-        "birth": context.user_data.pop("_current_rel_birth"),
-        "work": context.user_data.pop("_current_rel_work"),
-        "address": address,
-    })
-    lang_key = context.user_data["lang_key"]
-    await update.message.reply_text(
-        t(context, "rel_more"), reply_markup=yes_no_keyboard("rel_more_yes", "rel_more_no", lang_key)
-    )
-    return REL_LOOP
-
-
-async def rel_loop_decision(update, context):
-    query = update.callback_query
-    await query.answer()
-    lang_key = context.user_data["lang_key"]
-    if query.data == "rel_more_yes":
-        await query.edit_message_text(t(context, "rel_relation"), reply_markup=relation_keyboard(lang_key))
-        return REL_RELATION
-    await query.edit_message_text(t(context, "choose_format"), reply_markup=format_keyboard())
-    return CHOOSING_FORMAT
-
-
-# ---------------------------------------------------------------------------
-# Format tanlash va hujjatlarni yuborish
-# ---------------------------------------------------------------------------
-async def choose_format_and_send(update, context):
-    query = update.callback_query
-    await query.answer()
-    fmt = "pdf" if query.data == "fmt_pdf" else "docx"
-
-    lang_key = context.user_data["lang_key"]
-    data = context.user_data
-
-    await query.edit_message_text(t(context, "done"))
-
-    # MA’LUMOTNOMA va yaqin qarindoshlar ma’lumotini bitta faylga birlashtiramiz.
-    try:
-        path = generate("combined", lang_key, data, fmt)
-    except Exception as e:
-        logger.exception("Bitta hujjat yaratishda xato: %s", e)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id, text=f"Xatolik yuz berdi: {e}"
-        )
-        context.user_data.clear()
-        return ConversationHandler.END
-
-    with open(path, "rb") as f:
-        file_bytes = f.read()
-
-    with open(path, "rb") as f:
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=f,
-            filename=os.path.basename(path),
-            caption="✅ MA’LUMOTNOMA va yaqin qarindoshlar haqidagi ma’lumot",
-        )
-    os.remove(path)
-
-    await db.log_document(
-        query.message.chat_id,
-        data.get("full_name", "—"),
-        fmt,
-        os.path.basename(path),
-        file_bytes,
-    )
-
-    photo_path = context.user_data.get("photo_path")
-    if photo_path and os.path.exists(photo_path):
-        os.remove(photo_path)
-
-    context.user_data.clear()
-    return ConversationHandler.END
-
-
-async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Faqat admin uchun: nechta odam foydalanganini ko'rsatadi."""
-    if not ADMIN_ID:
-        await update.message.reply_text(
-            "⚠️ ADMIN_ID sozlanmagan. Render'da ADMIN_ID muhit o'zgaruvchisini qo'shing."
-        )
-        return
-    if str(update.effective_user.id) != str(ADMIN_ID):
-        await update.message.reply_text(
-            f"⛔ Bu buyruq faqat admin uchun. Sizning ID'ingiz: {update.effective_user.id}"
-        )
-        return
-    user_count = await db.get_user_count()
-    doc_count = await db.get_document_count()
-    await update.message.reply_text(
-        f"👥 Foydalanuvchilar soni: {user_count}\n"
-        f"📄 Yaratilgan hujjatlar soni: {doc_count}"
+def language_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="O'zbekcha", callback_data="lang_uz"),
+                InlineKeyboardButton(text="Русский", callback_data="lang_ru"),
+            ]
+        ]
     )
 
 
-async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """Faqat admin uchun: /broadcast — barcha foydalanuvchilarga xabar yuborish."""
-    if not ADMIN_ID:
-        await update.message.reply_text(
-            "⚠️ ADMIN_ID sozlanmagan. Render'da ADMIN_ID muhit o'zgaruvchisini qo'shing."
-        )
-        return ConversationHandler.END
-    if str(update.effective_user.id) != str(ADMIN_ID):
-        await update.message.reply_text(
-            f"⛔ Bu buyruq faqat admin uchun. Sizning ID'ingiz: {update.effective_user.id}"
-        )
-        return ConversationHandler.END
-    await update.message.reply_text(
-        "📢 Barcha foydalanuvchilarga yuboriladigan xabarni yuboring "
-        "(matn, rasm yoki fayl — caption bilan ham bo'ladi).\n"
-        "Bekor qilish uchun /cancel."
+def script_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(text="Кирилча", callback_data="script_cyr"),
+                InlineKeyboardButton(text="Lotincha", callback_data="script_lat"),
+            ]
+        ]
     )
-    return BROADCAST_WAITING
 
 
-async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    if not ADMIN_ID or str(update.effective_user.id) != str(ADMIN_ID):
-        return ConversationHandler.END
+# ---------- /start va /cancel ----------
 
-    user_ids = await db.get_all_user_ids()
-    sent, failed = 0, 0
-    for chat_id in user_ids:
-        try:
-            await context.bot.copy_message(
-                chat_id=chat_id,
-                from_chat_id=update.effective_chat.id,
-                message_id=update.message.message_id,
+@dp.message(CommandStart())
+async def cmd_start(message: Message, state: FSMContext):
+    await state.clear()
+    await state.update_data(work_history=[])
+    await message.answer(
+        "Assalomu alaykum! Men rasmiy MA'LUMOTNOMA (obyektivka) tayyorlab beruvchi botman.\n\n"
+        "Avvalo, hujjat qaysi tilda bo'lishini tanlang:",
+        reply_markup=language_kb(),
+    )
+    await state.set_state(ObyektivkaForm.language)
+
+
+@dp.callback_query(ObyektivkaForm.language, F.data == "lang_uz")
+async def choose_lang_uz(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(language="uz")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        "Qaysi yozuvda (alifboda) yozishni xohlaysiz? "
+        "Javoblaringizni istagan yozuvda kiriting — hujjat tanlangan yozuvga moslab tayyorlanadi.",
+        reply_markup=script_kb(),
+    )
+    await state.set_state(ObyektivkaForm.script)
+    await callback.answer()
+
+
+@dp.callback_query(ObyektivkaForm.language, F.data == "lang_ru")
+async def choose_lang_ru(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(language="ru", script=None)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        "Диққат: ушбу режимда ҳужжат банд номлари русча чиқади, лекин жавобларни "
+        "ЎЗИНГИЗ русча киритишингиз керак — автоматик таржима амалга оширилмайди.",
+    )
+    await start_photo_step(callback.message, state)
+    await callback.answer()
+
+
+@dp.callback_query(ObyektivkaForm.script, F.data.in_({"script_cyr", "script_lat"}))
+async def choose_script(callback: CallbackQuery, state: FSMContext):
+    script = "cyr" if callback.data == "script_cyr" else "lat"
+    await state.update_data(script=script)
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await start_photo_step(callback.message, state)
+    await callback.answer()
+
+
+async def start_photo_step(message: Message, state: FSMContext):
+    await message.answer(
+        "Жараённи истаган вақтда /cancel буйруғи билан бекор қилишингиз мумкин.\n\n"
+        "Аввало, 3x4 см ҳажмдаги профил суратингизни юборинг "
+        "(агар ҳозир бўлмаса, пастдаги тугмани босинг):",
+        reply_markup=skip_kb("Суратсиз давом этиш"),
+    )
+    await state.set_state(ObyektivkaForm.photo)
+
+
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("Жараён бекор қилинди. Қайта бошлаш учун /start босинг.")
+
+
+# ---------- Surat ----------
+
+@dp.message(ObyektivkaForm.photo, F.photo)
+async def process_photo(message: Message, state: FSMContext):
+    await state.update_data(photo_file_id=message.photo[-1].file_id)
+    await ask_full_name(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.photo, F.data == "skip")
+async def skip_photo(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_full_name(callback.message, state)
+    await callback.answer()
+
+
+async def ask_full_name(message: Message, state: FSMContext):
+    await message.answer("Ф.И.Ш. (фамилия, исм, шарифингизни) тўлиқ киритинг:")
+    await state.set_state(ObyektivkaForm.full_name)
+
+
+# ---------- Oddiy matnli bosqichlar ----------
+
+@dp.message(ObyektivkaForm.full_name)
+async def process_full_name(message: Message, state: FSMContext):
+    await state.update_data(full_name=await normalize_input(state, message.text.strip()))
+    await message.answer(
+        "Ҳозирги лавозимингизга қачондан бошлаб ишлаётганингизни киритинг.\n"
+        "Масалан: 2007 йил 5 октябрдан"
+    )
+    await state.set_state(ObyektivkaForm.position_since)
+
+
+@dp.message(ObyektivkaForm.position_since)
+async def process_position_since(message: Message, state: FSMContext):
+    await state.update_data(position_since=await normalize_input(state, message.text.strip()))
+    await message.answer(
+        "Ҳозирги лавозимингиз ва ташкилот номини тўлиқ киритинг.\n"
+        "Масалан: Тошкент давлат иқтисодиёт университетининг ўқув ишлари бўйича проректори"
+    )
+    await state.set_state(ObyektivkaForm.current_position)
+
+
+@dp.message(ObyektivkaForm.current_position)
+async def process_current_position(message: Message, state: FSMContext):
+    await state.update_data(current_position=await normalize_input(state, message.text.strip()))
+    await message.answer("Туғилган йилингиз (сана, масалан: 15.02.1989):")
+    await state.set_state(ObyektivkaForm.birth_date)
+
+
+@dp.message(ObyektivkaForm.birth_date)
+async def process_birth_date(message: Message, state: FSMContext):
+    await state.update_data(birth_date=await normalize_input(state, message.text.strip()))
+    await message.answer("Туғилган жойингиз:")
+    await state.set_state(ObyektivkaForm.birth_place)
+
+
+@dp.message(ObyektivkaForm.birth_place)
+async def process_birth_place(message: Message, state: FSMContext):
+    await state.update_data(birth_place=await normalize_input(state, message.text.strip()))
+    await message.answer("Миллатингиз:")
+    await state.set_state(ObyektivkaForm.nationality)
+
+
+@dp.message(ObyektivkaForm.nationality)
+async def process_nationality(message: Message, state: FSMContext):
+    await state.update_data(nationality=await normalize_input(state, message.text.strip()))
+    await message.answer(
+        "Партиявийлигингиз (аъзо бўлмасангиз, «йўқ» тугмасини босинг):",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.party_affiliation)
+
+
+@dp.message(ObyektivkaForm.party_affiliation)
+async def process_party_affiliation(message: Message, state: FSMContext):
+    await state.update_data(party_affiliation=await normalize_input(state, message.text.strip()))
+    await ask_education_level(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.party_affiliation, F.data == "skip")
+async def skip_party_affiliation(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(party_affiliation=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_education_level(callback.message, state)
+    await callback.answer()
+
+
+async def ask_education_level(message: Message, state: FSMContext):
+    await message.answer("Маълумотингиз (масалан: олий, ўрта махсус):")
+    await state.set_state(ObyektivkaForm.education_level)
+
+
+@dp.message(ObyektivkaForm.education_level)
+async def process_education_level(message: Message, state: FSMContext):
+    await state.update_data(education_level=await normalize_input(state, message.text.strip()))
+    await message.answer(
+        "Тамомлаган ўқув юртингиз, йили ва шакли (кундузги/сиртқи) ни киритинг.\n"
+        "Масалан: 1982 й. Тошкент давлат университети (кундузги)"
+    )
+    await state.set_state(ObyektivkaForm.graduated_from)
+
+
+@dp.message(ObyektivkaForm.graduated_from)
+async def process_graduated_from(message: Message, state: FSMContext):
+    await state.update_data(graduated_from=await normalize_input(state, message.text.strip()))
+    await message.answer("Маълумотингиз бўйича мутахассислигингиз:")
+    await state.set_state(ObyektivkaForm.specialty)
+
+
+@dp.message(ObyektivkaForm.specialty)
+async def process_specialty(message: Message, state: FSMContext):
+    await state.update_data(specialty=await normalize_input(state, message.text.strip()))
+    await message.answer(
+        "Илмий даражангиз борми? Бўлса ёзинг, бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.academic_degree)
+
+
+@dp.message(ObyektivkaForm.academic_degree)
+async def process_academic_degree(message: Message, state: FSMContext):
+    await state.update_data(academic_degree=await normalize_input(state, message.text.strip()))
+    await ask_academic_title(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.academic_degree, F.data == "skip")
+async def skip_academic_degree(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(academic_degree=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_academic_title(callback.message, state)
+    await callback.answer()
+
+
+async def ask_academic_title(message: Message, state: FSMContext):
+    await message.answer(
+        "Илмий унвонингиз борми? Бўлса ёзинг, бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.academic_title)
+
+
+@dp.message(ObyektivkaForm.academic_title)
+async def process_academic_title(message: Message, state: FSMContext):
+    await state.update_data(academic_title=await normalize_input(state, message.text.strip()))
+    await ask_foreign_languages(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.academic_title, F.data == "skip")
+async def skip_academic_title(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(academic_title=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_foreign_languages(callback.message, state)
+    await callback.answer()
+
+
+async def ask_foreign_languages(message: Message, state: FSMContext):
+    await message.answer(
+        "Қайси чет тилларини мукаммал биласиз? "
+        "(Луғат ёрдамида биладиганлари кўрсатилмайди.) Бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.foreign_languages)
+
+
+@dp.message(ObyektivkaForm.foreign_languages)
+async def process_foreign_languages(message: Message, state: FSMContext):
+    await state.update_data(foreign_languages=await normalize_input(state, message.text.strip()))
+    await ask_military_title(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.foreign_languages, F.data == "skip")
+async def skip_foreign_languages(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(foreign_languages=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_military_title(callback.message, state)
+    await callback.answer()
+
+
+async def ask_military_title(message: Message, state: FSMContext):
+    await message.answer(
+        "Ҳарбий (махсус) унвонингиз борми (фақат ҳарбий/ҳуқуқни муҳофаза қилиш "
+        "идоралари ходимлари учун)? Бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.military_title)
+
+
+@dp.message(ObyektivkaForm.military_title)
+async def process_military_title(message: Message, state: FSMContext):
+    await state.update_data(military_title=await normalize_input(state, message.text.strip()))
+    await ask_state_awards(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.military_title, F.data == "skip")
+async def skip_military_title(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(military_title=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_state_awards(callback.message, state)
+    await callback.answer()
+
+
+async def ask_state_awards(message: Message, state: FSMContext):
+    await message.answer(
+        "Давлат мукофотлари ва премиялари билан тақдирланганмисиз (қанақа)? "
+        "Бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.state_awards)
+
+
+@dp.message(ObyektivkaForm.state_awards)
+async def process_state_awards(message: Message, state: FSMContext):
+    await state.update_data(state_awards=await normalize_input(state, message.text.strip()))
+    await ask_departmental_awards(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.state_awards, F.data == "skip")
+async def skip_state_awards(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(state_awards=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_departmental_awards(callback.message, state)
+    await callback.answer()
+
+
+async def ask_departmental_awards(message: Message, state: FSMContext):
+    await message.answer(
+        "Идоравий мукофотлар билан тақдирланганмисиз (қанақа)? "
+        "Бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.departmental_awards)
+
+
+@dp.message(ObyektivkaForm.departmental_awards)
+async def process_departmental_awards(message: Message, state: FSMContext):
+    await state.update_data(departmental_awards=await normalize_input(state, message.text.strip()))
+    await ask_elected_member(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.departmental_awards, F.data == "skip")
+async def skip_departmental_awards(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(departmental_awards=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_elected_member(callback.message, state)
+    await callback.answer()
+
+
+async def ask_elected_member(message: Message, state: FSMContext):
+    await message.answer(
+        "Халқ депутатлари, республика, вилоят, шаҳар ва туман Кенгаши депутатимисиз "
+        "ёки бошқа сайланадиган органларнинг аъзосимисиз (тўлиқ кўрсатинг)? "
+        "Бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.elected_member)
+
+
+@dp.message(ObyektivkaForm.elected_member)
+async def process_elected_member(message: Message, state: FSMContext):
+    await state.update_data(elected_member=await normalize_input(state, message.text.strip()))
+    await ask_work_entry(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.elected_member, F.data == "skip")
+async def skip_elected_member(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(elected_member=await skip_default(state))
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await ask_work_entry(callback.message, state)
+    await callback.answer()
+
+
+async def ask_work_entry(message: Message, state: FSMContext):
+    await message.answer(
+        "Энди МЕҲНАТ ФАОЛИЯТИНГИЗ ҳақида, талаба йилларингиздан бошлаб, "
+        "хронологик тартибда киритинг.\n"
+        "Бир ёзувни қуйидаги тартибда юборинг:\n"
+        "<йиллар> йй. - <лавозим/ташкилот>\n\n"
+        "Масалан: 1998-2004 йй. - Тошкент давлат университети талабаси"
+    )
+    await state.set_state(ObyektivkaForm.work_entry)
+
+
+@dp.message(ObyektivkaForm.work_entry)
+async def process_work_entry(message: Message, state: FSMContext):
+    data = await state.get_data()
+    work_history = data.get("work_history", [])
+    work_history.append(await normalize_input(state, message.text.strip()))
+    await state.update_data(work_history=work_history)
+
+    await message.answer(
+        "Яна бир иш/лавозим ёзувини қўшасизми?",
+        reply_markup=more_or_done_kb(),
+    )
+    await state.set_state(ObyektivkaForm.work_entry_more)
+
+
+@dp.callback_query(ObyektivkaForm.work_entry_more, F.data == "more")
+async def work_entry_more(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer("Яна бир ёзувни киритинг (йиллар йй. - лавозим/ташкилот):")
+    await state.set_state(ObyektivkaForm.work_entry)
+    await callback.answer()
+
+
+@dp.callback_query(ObyektivkaForm.work_entry_more, F.data == "done")
+async def work_entry_done(callback: CallbackQuery, state: FSMContext):
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await callback.message.answer(
+        "Изоҳ қўшмоқчимисиз? Бўлмаса тугмани босинг:",
+        reply_markup=skip_kb(),
+    )
+    await state.set_state(ObyektivkaForm.notes)
+    await callback.answer()
+
+
+@dp.message(ObyektivkaForm.notes)
+async def process_notes(message: Message, state: FSMContext):
+    await state.update_data(notes=await normalize_input(state, message.text.strip()))
+    await generate_and_send(message, state)
+
+
+@dp.callback_query(ObyektivkaForm.notes, F.data == "skip")
+async def skip_notes(callback: CallbackQuery, state: FSMContext):
+    await state.update_data(notes="")
+    await callback.message.edit_reply_markup(reply_markup=None)
+    await generate_and_send(callback.message, state)
+    await callback.answer()
+
+
+# ---------- Hujjatni yaratish va yuborish ----------
+
+async def generate_and_send(message: Message, state: FSMContext, bot: Bot | None = None):
+    data = await state.get_data()
+    await message.answer("Ҳужжат тайёрланмоқда, бироз кутинг...")
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        safe_name = "".join(
+            c for c in data.get("full_name", "malumotnoma") if c.isalnum() or c in " _-"
+        ).strip()
+        safe_name = safe_name.replace(" ", "_") or "malumotnoma"
+
+        photo_path = None
+        photo_file_id = data.get("photo_file_id")
+        if photo_file_id:
+            bot_instance = bot or message.bot
+            photo_path = os.path.join(tmp_dir, "photo.jpg")
+            await bot_instance.download(photo_file_id, destination=photo_path)
+
+        docx_path = os.path.join(tmp_dir, f"{safe_name}.docx")
+        generate_malumotnoma_docx(data, docx_path, photo_path=photo_path,
+                                    lang_variant=_lang_variant(data))
+
+        await message.answer_document(FSInputFile(docx_path))
+
+        pdf_path = convert_docx_to_pdf(docx_path, tmp_dir)
+        if pdf_path:
+            await message.answer_document(FSInputFile(pdf_path))
+        else:
+            await message.answer(
+                "PDF версиясини тайёрлаб бўлмади (серверда LibreOffice топилмади), "
+                "лекин Word (.docx) файли тайёр."
             )
-            sent += 1
-        except Exception as e:
-            logger.warning("Broadcast xato (chat_id=%s): %s", chat_id, e)
-            failed += 1
 
-    await update.message.reply_text(
-        f"✅ Xabar yuborildi: {sent} ta\n❌ Yuborilmadi: {failed} ta"
-    )
-    return ConversationHandler.END
+    await message.answer("Маълумотнома тайёр! Янгисини яратиш учун /start босинг.")
+    await state.clear()
 
 
-async def cancel(update, context):
-    photo_path = context.user_data.get("photo_path")
-    if photo_path and os.path.exists(photo_path):
-        os.remove(photo_path)
-    context.user_data.clear()
-    await update.message.reply_text("Bekor qilindi. Qaytadan boshlash uchun /start bosing.")
-    return ConversationHandler.END
-
-
-TEXT_FILTER = filters.TEXT & ~filters.COMMAND
-
-
-def main():
-    if BOT_TOKEN == "PUT_YOUR_TOKEN_HERE":
+async def main():
+    if not BOT_TOKEN:
         raise RuntimeError(
-            "BOT_TOKEN oʻrnatilmagan! Muhit o'zgaruvchisi sifatida bering yoki "
-            "bot.py faylida toʻgʻridan-toʻgʻri kiriting."
+            "BOT_TOKEN топилмади. Лойиҳа папкасида .env файл яратинг ва "
+            "ичига BOT_TOKEN=... деб ёзинг (токенни @BotFather дан олинг)."
         )
-
-    async def _post_init(application: Application) -> None:
-        await db.init_db()
-
-    app = Application.builder().token(BOT_TOKEN).post_init(_post_init).build()
-
-    conv_handler = ConversationHandler(
-        entry_points=[
-            MessageHandler(filters.Regex(f"^{re.escape(BTN_NEW)}$"), begin_document)
-        ],
-        states={
-            CHOOSING_LANG: [CallbackQueryHandler(choose_lang, pattern="^lang_")],
-            CHOOSING_SCRIPT: [CallbackQueryHandler(choose_script, pattern="^script_")],
-            FULL_NAME: [MessageHandler(TEXT_FILTER, get_full_name)],
-            PHOTO: [MessageHandler(filters.PHOTO, get_photo)],
-            BIRTH_DATE: [MessageHandler(TEXT_FILTER, get_birth_date)],
-            BIRTH_PLACE: [MessageHandler(TEXT_FILTER, get_birth_place)],
-            NATIONALITY: [MessageHandler(TEXT_FILTER, get_nationality)],
-            EDU_LEVEL: [MessageHandler(TEXT_FILTER, get_edu_level)],
-            EDU_DETAIL: [MessageHandler(TEXT_FILTER, get_edu_detail)],
-            SPECIALTY: [MessageHandler(TEXT_FILTER, get_specialty)],
-            ACAD_DEGREE: [MessageHandler(TEXT_FILTER, get_acad_degree)],
-            ACAD_TITLE: [MessageHandler(TEXT_FILTER, get_acad_title)],
-            FOREIGN_LANG: [MessageHandler(TEXT_FILTER, get_foreign_lang)],
-            MILITARY_TITLE: [MessageHandler(TEXT_FILTER, get_military_title)],
-            STATE_AWARDS: [MessageHandler(TEXT_FILTER, get_state_awards)],
-            WORK_YEARS: [MessageHandler(TEXT_FILTER, get_work_years)],
-            WORK_POSITION: [MessageHandler(TEXT_FILTER, get_work_position)],
-            WORK_LOOP: [CallbackQueryHandler(work_loop_decision, pattern="^work_more_")],
-            ASK_RELATIVES: [CallbackQueryHandler(ask_relatives_decision, pattern="^rel_(yes|no)$")],
-            REL_RELATION: [CallbackQueryHandler(get_rel_relation, pattern="^relation_")],
-            REL_NAME: [MessageHandler(TEXT_FILTER, get_rel_name)],
-            REL_BIRTH: [MessageHandler(TEXT_FILTER, get_rel_birth)],
-            REL_WORK: [MessageHandler(TEXT_FILTER, get_rel_work)],
-            REL_ADDRESS: [MessageHandler(TEXT_FILTER, get_rel_address)],
-            REL_LOOP: [CallbackQueryHandler(rel_loop_decision, pattern="^rel_more_")],
-            CHOOSING_FORMAT: [CallbackQueryHandler(choose_format_and_send, pattern="^fmt_")],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    # Asosiy menyu tugmalari (ConversationHandler'dan tashqarida, doim ishlaydi)
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stats", stats))
-
-    broadcast_handler = ConversationHandler(
-        entry_points=[CommandHandler("broadcast", broadcast_start)],
-        states={
-            BROADCAST_WAITING: [MessageHandler(filters.ALL & ~filters.COMMAND, broadcast_send)]
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    app.add_handler(broadcast_handler)
-    app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_MY_OBJECTS)}$"), menu_my_objects))
-    app.add_handler(MessageHandler(filters.Regex(f"^{re.escape(BTN_BALANCE)}$"), menu_balance))
-    app.add_handler(CallbackQueryHandler(resend_document, pattern=r"^resend_doc:\d+$"))
-
-    app.add_handler(conv_handler)
-
-    logger.info("Bot ishga tushdi...")
-
-    # Render Free Web Service uchun webhook.
-    # Python 3.14 da python-telegram-bot run_webhook event-loopni
-    # MainThread'da aniq yaratishni talab qilishi mumkin.
-    import asyncio
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
-    port = int(os.environ.get("PORT", "10000"))
-    external_url = os.environ.get("RENDER_EXTERNAL_URL")
-    if external_url:
-        webhook_url = external_url.rstrip("/") + "/telegram-webhook"
-        app.run_webhook(
-            listen="0.0.0.0",
-            port=port,
-            url_path="telegram-webhook",
-            webhook_url=webhook_url,
-            allowed_updates=Update.ALL_TYPES,
-        )
-    else:
-        # Lokal kompyuterda ishga tushirish uchun polling.
-        app.run_polling(allowed_updates=Update.ALL_TYPES)
+    bot = Bot(token=BOT_TOKEN)
+    await dp.start_polling(bot)
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
