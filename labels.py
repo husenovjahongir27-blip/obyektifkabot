@@ -33,17 +33,26 @@ _UZ_CYR = dict(
         "(тўлиқ кўрсатилиши лозим):"
     ),
     WORK_HEADING="МЕҲНАТ ФАОЛИЯТИ",
-    NOTES_LABEL="Изоҳ:",
     PHOTO_PLACEHOLDER=(
         "3х4 см, охирги 3 ой давомида олинган рангли фотосурат, "
         "электрон кўринишда (расмий кийимда, оқ фонда)."
     ),
+    # 2-sahifa: yaqin qarindoshlari haqida
+    RELATIVES_TITLE_SUFFIX="нинг яқин қариндошлари ҳақида",
+    RELATIVES_HEADING="МАЪЛУМОТ",
+    RELATIVES_HEADERS=[
+        "Қариндош-\nлиги",
+        "Фамилияси, исми\nва отасининг исми",
+        "Туғилган йили\nва жойи",
+        "Иш жойи ва лавозими",
+        "Турар жойи",
+    ],
 )
 
 # ==================== O'zbekcha - Lotin (avtomatik, uz_cyr dan) ====================
 
 _LIST_KEYS = {"BIRTH_LABELS", "NATIONALITY_LABELS", "EDUCATION_LABELS",
-              "DEGREE_LABELS", "LANGUAGE_LABELS"}
+              "DEGREE_LABELS", "LANGUAGE_LABELS", "RELATIVES_HEADERS"}
 
 _UZ_LAT = {
     key: ([to_latin(v) for v in value] if key in _LIST_KEYS else to_latin(value))
@@ -67,11 +76,19 @@ _RU = dict(
         "города и района или членом других избираемых органов (указать полностью):"
     ),
     WORK_HEADING="ТРУДОВАЯ ДЕЯТЕЛЬНОСТЬ",
-    NOTES_LABEL="Примечание:",
     PHOTO_PLACEHOLDER=(
         "Цветная фотография 3x4 см, сделанная в течение последних 3 месяцев, "
         "в электронном виде (в официальной одежде, на белом фоне)."
     ),
+    RELATIVES_TITLE_SUFFIX=" — о его (её) близких родственниках",
+    RELATIVES_HEADING="СВЕДЕНИЯ",
+    RELATIVES_HEADERS=[
+        "Степень\nродства",
+        "Фамилия, имя\nи отчество",
+        "Год и место\nрождения",
+        "Место работы\nи должность",
+        "Место\nжительства",
+    ],
 )
 
 _LABEL_SETS = {
