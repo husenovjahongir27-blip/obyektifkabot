@@ -50,6 +50,8 @@ async def init_db():
             )
             """
         )
+        await conn.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS balance BIGINT NOT NULL DEFAULT 0")
+
         # Eski jadvalda bo'lmasa — faylning o'zini saqlash uchun ustunlar qo'shamiz
         await conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_name TEXT")
         await conn.execute("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_data BYTEA")
@@ -92,59 +94,3 @@ async def get_user_documents(chat_id: int, limit: int = 15):
     if not DATABASE_URL:
         return []
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT id, full_name, fmt, created_at FROM documents
-            WHERE chat_id = $1
-            ORDER BY created_at DESC
-            LIMIT $2
-            """,
-            chat_id,
-            limit,
-        )
-    return rows
-
-
-async def get_document_file(doc_id: int, chat_id: int):
-    """Foydalanuvchiga tegishli hujjatning fayl nomi va bayt ma'lumotini qaytaradi."""
-    if not DATABASE_URL:
-        return None
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            """
-            SELECT file_name, file_data FROM documents
-            WHERE id = $1 AND chat_id = $2
-            """,
-            doc_id,
-            chat_id,
-        )
-    return row
-
-
-async def get_all_user_ids() -> list[int]:
-    if not DATABASE_URL:
-        return []
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT chat_id FROM users")
-    return [r["chat_id"] for r in rows]
-
-
-async def get_user_count() -> int:
-    if not DATABASE_URL:
-        return 0
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT COUNT(*) AS c FROM users")
-    return row["c"]
-
-
-async def get_document_count() -> int:
-    if not DATABASE_URL:
-        return 0
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT COUNT(*) AS c FROM documents")
-    return row["c"]
