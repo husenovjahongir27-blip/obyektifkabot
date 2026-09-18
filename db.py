@@ -94,3 +94,107 @@ async def get_user_documents(chat_id: int, limit: int = 15):
     if not DATABASE_URL:
         return []
     pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            """
+            SELECT id, full_name, fmt, created_at FROM documents
+            WHERE chat_id = $1
+            ORDER BY created_at DESC
+            LIMIT $2
+            """,
+            chat_id,
+            limit,
+        )
+    return rows
+
+
+async def get_document_file(doc_id: int, chat_id: int):
+    """Foydalanuvchiga tegishli hujjatning fayl nomi va bayt ma'lumotini qaytaradi."""
+    if not DATABASE_URL:
+        return None
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """
+            SELECT file_name, file_data FROM documents
+            WHERE id = $1 AND chat_id = $2
+            """,
+            doc_id,
+            chat_id,
+        )
+    return row
+
+
+async def get_all_user_ids() -> list[int]:
+    if not DATABASE_URL:
+        return []
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT chat_id FROM users")
+    return [r["chat_id"] for r in rows]
+
+
+async def get_user_count() -> int:
+    if not DATABASE_URL:
+        return 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT COUNT(*) AS c FROM users")
+    return row["c"]
+
+
+async def get_document_count() -> int:
+    if not DATABASE_URL:
+        return 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT COUNT(*) AS c FROM documents")
+    return row["c"]
+
+
+async def get_user_balance(chat_id: int) -> int:
+    if not DATABASE_URL:
+        return 0
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT balance FROM users WHERE chat_id = $1", chat_id)
+    return int(row["balance"] or 0) if row else 0
+
+
+async def get_total_income() -> int:
+    """payments jadvali bo'lsa, mos ustunlar orqali tasdiqlangan tushumni hisoblaydi.
+
+    To'lov integratsiyasi hali ulanmagan bo'lsa 0 qaytaradi; bu statistika
+    tugmasining qolgan ko'rsatkichlar bilan birga ishlashiga xalaqit bermaydi.
+    """
+    if not DATABASE_URL:
+        return 0
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        exists = await conn.fetchval(
+            "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
+            "WHERE table_schema='public' AND table_name='payments')"
+        )
+        if not exists:
+            return 0
+
+        columns = await conn.fetch(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema='public' AND table_name='payments'"
+        )
+        column_names = {row["column_name"] for row in columns}
+        if "amount" not in column_names:
+            return 0
+
+        if "status" in column_names:
+            row = await conn.fetchrow(
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM payments "
+                "WHERE status IN ('paid','success','confirmed')"
+            )
+        else:
+            row = await conn.fetchrow(
+                "SELECT COALESCE(SUM(amount), 0) AS total FROM payments"
+            )
+
+    return int(row["total"] or 0)
