@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 
 import db
 from states import ObyektivkaForm, AdminBroadcastForm
-from generator import generate_malumotnoma_docx, convert_docx_to_pdf
+from generator import generate_malumotnoma_docx, generate_malumotnoma_pdf, convert_docx_to_pdf
 from uz_translit import normalize_text, to_latin
 
 load_dotenv()
@@ -41,6 +41,7 @@ def _parse_admin_ids() -> set[int]:
     return ids
 
 ADMIN_IDS = _parse_admin_ids()
+logging.info("Admin ID lar: %s", sorted(ADMIN_IDS))
 
 def is_admin(message: Message) -> bool:
     return bool(message.from_user and message.from_user.id in ADMIN_IDS)
@@ -243,6 +244,15 @@ async def send_admin_stats(message: Message):
     )
 
 
+@dp.message(Command("myid"))
+async def cmd_myid(message: Message):
+    uid = message.from_user.id if message.from_user else 0
+    await message.answer(
+        f"🆔 Sizning Telegram ID: {uid}\n\n"
+        "Render → Environment Variables → ADMIN_ID ga aynan shu raqamni yozing."
+    )
+
+
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
     if not is_admin(message):
@@ -278,7 +288,8 @@ async def admin_broadcast_callback(callback: CallbackQuery, state: FSMContext):
 @dp.message(Command("stat"))
 async def cmd_stat(message: Message, state: FSMContext):
     if not is_admin(message):
-        await message.answer("⛔ Bu buyruq faqat administrator uchun.")
+        uid = message.from_user.id if message.from_user else 0
+        await message.answer(f"⛔ Ruxsat yoʻq. Sizning Telegram ID: {uid}")
         return
     await send_admin_stats(message)
 
@@ -891,8 +902,13 @@ async def generate_and_send(message: Message, state: FSMContext, bot: Bot | None
 
         await message.answer_document(FSInputFile(docx_path))
 
-        pdf_path = convert_docx_to_pdf(docx_path, tmp_dir)
-        if pdf_path:
+        # PDF ni LibreOffice'siz to'g'ridan-to'g'ri yaratamiz.
+        pdf_path = os.path.join(tmp_dir, f"{safe_name}.pdf")
+        try:
+            generate_malumotnoma_pdf(
+                data, pdf_path, photo_path=photo_path,
+                lang_variant=_lang_variant(data),
+            )
             with open(pdf_path, "rb") as f:
                 pdf_bytes = f.read()
             try:
@@ -903,11 +919,10 @@ async def generate_and_send(message: Message, state: FSMContext, bot: Bot | None
             except Exception:
                 logging.exception("DB xatosi: log_document (pdf)")
             await message.answer_document(FSInputFile(pdf_path))
-        else:
-            await say(
-                message, state,
-                "PDF версиясини тайёрлаб бўлмади (серверда LibreOffice топилмади), "
-                "лекин Word (.docx) файли тайёр.",
+        except Exception:
+            logging.exception("PDF yaratishda xatolik")
+            await message.answer(
+                "⚠️ Word fayli tayyor, ammo PDF yaratishda xatolik yuz berdi."
             )
 
     await say(
