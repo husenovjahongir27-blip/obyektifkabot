@@ -24,7 +24,7 @@ class ObyektivkaForm(StatesGroup):
     elected_member = State()
     work_entry = State()
     work_entry_more = State()
-
+    
     # Yaqin qarindoshlar haqida (2-sahifa jadvali uchun)
     relative_relation = State()
     relative_name = State()
